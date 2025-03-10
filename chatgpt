@@ -34,8 +34,8 @@ lf = open(logfile, 'a', encoding='utf-8')
 gpt_model = 'gpt-4.5-preview'
 #gpt_model = 'gpt-4o'
 temp = 0.3 # range 0.0 - 2.0
-your_name = 'Jonathan' # Your name 
-assistant_name = 'Alice' # Your assistant's name 
+your_name = '' # Your name 
+assistant_name = '' # Your assistant's name 
 
 # Create a PromptSession object
 session = PromptSession(multiline=True)
