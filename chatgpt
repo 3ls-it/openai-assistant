@@ -1,0 +1,230 @@
+#!/data/data/com.termux/files/usr/bin/env python3 
+"""
+  I put this together for personal use using bits and
+pieces from the example code provided by OpenAI' documentation.
+https://platform.openai.com/docs
+  It was developed and is used on a Unix-like system with no
+consideration for that Other OS, though it should work on
+most any platform.
+  The Assitants API is used here. You will need to choose the
+ChatGPT model that works with this API, not all do.
+https://platform.openai.com/docs/models
+
+-J Adams jfa63[at]duck[dot]com
+"""
+import openai
+import os
+import readline
+import sys
+
+from openai import OpenAI
+from openai import AssistantEventHandler
+
+from typing_extensions import override
+from prompt_toolkit import PromptSession
+from prompt_toolkit.key_binding import KeyBindings
+
+
+  
+homedir = os.path.expanduser("~") + "/"
+logfile = homedir + ".chatgpt_log.txt"
+lf = open(logfile, 'a', encoding='utf-8')
+# Check the current model choices and choose the one that
+# works for you and with the Assistants API 
+gpt_model = 'gpt-4.5-preview'
+#gpt_model = 'gpt-4o'
+temp = 0.3 # range 0.0 - 2.0
+your_name = 'Jonathan' # Your name 
+assistant_name = 'Alice' # Your assistant's name 
+
+# Create a PromptSession object
+session = PromptSession(multiline=True)
+
+# Define custom key bindings
+kb = KeyBindings()
+
+
+# Define a key combination (e.g., Tab+Enter) to submit input
+@kb.add('tab', 'enter')
+def _(event):
+    event.app.current_buffer.validate_and_handle()
+
+def file_upload(client, vector_store, filename) -> bool :
+    # Ready the files for upload to OpenAI 
+    # filenames relative to homedir. 
+    file_paths = [filename]
+    file_streams = [open(path, "rb") for path in file_paths]
+
+    # Use the upload and poll SDK helper to upload the files, add them to the vector store,
+    # and poll the status of the file batch for completion.
+    file_batch = client.beta.vector_stores.file_batches.upload_and_poll(
+            vector_store_id=vector_store.id, files=file_streams
+    )
+
+    # Print the status and the file counts of the batch.
+    print("File upload: " + file_batch.status)
+    print(file_batch.file_counts)
+    print("")
+    return True
+# End file_upload()  
+
+
+# Define an EventHandler class overriding two methods   
+# to handle the events in the response stream. 
+class EventHandler(AssistantEventHandler):    
+    @override
+    def on_text_created(self, text) -> None:
+        # Write to logfile. 
+        lf.write(f'{assistant_name}: ')
+        print(f'\n{assistant_name}: ', end='', flush=True)
+    
+    @override
+    def on_text_delta(self, delta, snapshot):
+        resp = str(delta.value)
+        # Write to logfile. 
+        lf.write(resp)
+        print(resp, end='')
+    
+    def on_tool_call_created(self, tool_call):
+        print(f'\n> {tool_call.type}\n', flush=True)
+
+    def on_tool_call_delta(self, delta, snapshot):
+        if delta.type == 'code_interpreter':
+            if delta.code_interpreter.input:
+                print(delta.code_interpreter.input, end='', flush=True)
+            if delta.code_interpreter.outputs:
+                print(f'\n\nOutput >', flush=True)
+                for output in delta.code_interpreter.outputs:
+                    if output.type == 'logs':
+                        print(f'\n{output.logs}', flush=True)
+# End class  
+
+
+
+def main():
+    # Instantiate an OpenAI object. 
+    try:
+        client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
+    except openai.APIConnectionError as e:
+        print("The server could not be reached")
+        print(e.__cause__)  # an underlying Exception, likely raised within httpx.
+        sys.exit(1)
+    except openai.AuthenticationError as e:
+        print("Check your API key or token and make sure it is correct and active.")
+        print(e.__cause__)  # an underlying Exception, likely raised within httpx.
+        sys.exit(1)
+
+    # Create and configure an Assistant object. 
+    assistant = client.beta.assistants.create(
+        instructions = f"You are {assistant_name}, {your_name}'s personal AI assistant.",
+        name = assistant_name,
+        tools = [{"type": "code_interpreter"},
+               {"type": "file_search"}],
+        model = gpt_model,
+        temperature = temp
+    )
+
+    # Here we set up a Vector Store to hold the chat history.
+    vector_store = client.beta.vector_stores.create(name="Chat History")
+    file_upload(client, vector_store, logfile)
+
+
+    # Update Assistant object 
+    assistant = client.beta.assistants.update(
+          assistant_id=assistant.id,
+          tool_resources={"file_search":
+                         {"vector_store_ids": [vector_store.id]}},
+    )
+
+    # Create Thread instance. 
+    thread = client.beta.threads.create()
+
+
+    # We take user input, and create a message,  
+    # create a Run, then stream the whole of the response. 
+    print(f'\nHow can I help you {your_name}?\n')
+    while True:
+        # Take user input. 
+        #query = input("> ")
+        try:
+            # Get user input with custom key bindings
+            query = session.prompt('>> ', key_bindings=kb)
+        except (EOFError, KeyboardInterrupt):
+            break
+
+        if query == "Done":
+            print(f'Bye! -{assistant_name}')
+            break
+
+        if query == "Upload":
+            fname = input('Filename realative to ~/: ')
+            if os.path.isfile(homedir + fname) is True:
+                print("You have chosen the file:")
+                print(homedir + fname)
+                resp = input("Is this correct? [Y/n] ")
+                if resp == "Y":
+                    try:
+                        file_upload(client, vector_store, homedir+fname)
+                        # Update Assistant object 
+                        assistant = client.beta.assistants.update(
+                              assistant_id=assistant.id,
+                              tool_resources={"file_search":
+                                             {"vector_store_ids": [vector_store.id]}},
+                        )
+                    except openai.BadRequestError as e:
+                        print("Recieved a BadRequestError from OpenAI.")
+                        print("This could mean that the file type is unsupported.\n\n")
+                        continue
+                else:
+                    print("Cancelled\n\n")
+                    continue
+            else:
+                print("The file:")
+                print(homedir + fname)
+                print("does not exist, has been moved, or is a directory.\n\n")
+                continue
+
+        try:
+            # Write the query to logfile. 
+            quest = "Me: " + query
+            lf.write(quest+"\n\n\n")
+
+            # Create a message from the user query. 
+            message = client.beta.threads.messages.create(
+                thread_id=thread.id, role="user",
+                content=query,
+            )
+
+            # Then, we use the `stream` SDK helper 
+            # with the `EventHandler` class to create the Run 
+            # and stream the response.
+            with client.beta.threads.runs.stream(
+                thread_id=thread.id,
+                assistant_id=assistant.id,
+                instructions = "Do not search uploaded files, unless asked to. \
+                                Where possible, provide citations",
+                event_handler=EventHandler(),
+                ) as stream:
+                        stream.until_done()
+                        lf.write("\n\n\n")
+                        print("\n\n")
+
+        except openai.APIConnectionError as e:
+            print("The server could not be reached")
+            print(e.__cause__)  # an underlying Exception, likely raised within httpx.
+        except openai.RateLimitError as e:
+            print("A 429 status code was received; we should back off a bit.")
+        except openai.APIStatusError as e:
+            print("A non-200-range status code was received")
+            print(e.status_code)
+            print(e.response)
+        # End try 
+    # End While  
+
+    lf.close()
+    print()
+# End main 
+
+
+if __name__ == '__main__':
+    main()
