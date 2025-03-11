@@ -16,7 +16,7 @@ https://platform.openai.com/docs/overview
 in-session memory, which is not persistent accross chats. To
 provide a chat history, we log the chat dialogue. At the start
 of each new chat, the chat history file is uploaded. You will
-see that when the assistants object is instanciated, the tools
+see that when the assistants object is instantiated, the tools
 'file_search' and 'code_interpreter' are loaded. See:  
 https://platform.openai.com/docs/assistants/overview  
 At the time of this writing, the Assistants API is still Beta.  
@@ -24,5 +24,9 @@ At the time of this writing, the Assistants API is still Beta.
   You will need to choose a ChatGPT model that works with
 this API, not all do.  
 https://platform.openai.com/docs/models  
+  
+  While entering a query, you can use L|R arrow keys to navigate
+your line of text. Hitting 'ENTER' will create a new line. To submit
+your query, use 'TAB+ENTER'.  
   
 -J Adams jfa63[at]duck[dot]com March 2025
