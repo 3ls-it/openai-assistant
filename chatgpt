@@ -71,7 +71,7 @@ def file_upload(client, vector_store, filename) -> bool :
 
     # Use the upload and poll SDK helper to upload the files, add them to the vector store,
     # and poll the status of the file batch for completion.
-    file_batch = client.beta.vector_stores.file_batches.upload_and_poll(
+    file_batch = client.vector_stores.file_batches.upload_and_poll(
             vector_store_id=vector_store.id, files=file_streams
     )
 
@@ -138,7 +138,7 @@ def main():
     )
 
     # Here we set up a Vector Store to hold the chat history.
-    vector_store = client.beta.vector_stores.create(name="Chat History")
+    vector_store = client.vector_stores.create(name="Chat History")
     file_upload(client, vector_store, logfile)
 
 
