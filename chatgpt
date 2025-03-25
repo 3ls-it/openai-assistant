@@ -15,11 +15,13 @@ https://platform.openai.com/docs/overview
   The Assitants API is used for this client. This API provides
 in-session memory, which is not persistent accross chats. To
 provide a chat history, we log the chat dialogue. At the start
-of each new chat, the chat history file is uploaded. You will 
+of each new chat, the chat history file is uploaded. You will
 see that when the assistants object is instanciated, the tools
 'file_search' and 'code_interpreter' are loaded. See:
 https://platform.openai.com/docs/assistants/overview
-At the time of this writing, the Assistants API is still Beta.
+At the time of this writing, the Assistants API is slated to
+be depricated in favour of the newer Responses API sometime
+in 2026.
 
   You will need to choose a ChatGPT model that works with
 this API, not all do.
@@ -27,6 +29,7 @@ https://platform.openai.com/docs/models
 
 -J Adams jfa63[at]duck[dot]com March 2025
 """
+
 import openai
 import os
 import readline
@@ -62,6 +65,8 @@ kb = KeyBindings()
 @kb.add('tab', 'enter')
 def _(event):
     event.app.current_buffer.validate_and_handle()
+# End _() 
+
 
 def file_upload(client, vector_store, filename) -> bool :
     # Ready the files for upload to OpenAI 
@@ -114,6 +119,7 @@ class EventHandler(AssistantEventHandler):
 # End class  
 
 
+
 def main():
     # Instantiate an OpenAI object. 
     try:
@@ -129,7 +135,7 @@ def main():
 
     # Create and configure an Assistant object. 
     assistant = client.beta.assistants.create(
-        instructions = f"You are {assistant_name}, {your_name}'s personal AI assistant.",
+        instructions = f"You are {assistant_name}, {your_name}'s personal AI assistant. All coding and programming queries refer to Unix-like environments unless otherwise noted.",
         name = assistant_name,
         tools = [{"type": "code_interpreter"},
                {"type": "file_search"}],
@@ -224,7 +230,7 @@ def main():
 
         except openai.APIConnectionError as e:
             print("The server could not be reached")
-            print(e.__cause__)  # an underlying Exception, likely raised within httpx.
+            print(e.__cause__)  # underlying Exception, likely raised within httpx.
         except openai.RateLimitError as e:
             print("A 429 status code was received; we should back off a bit.")
         except openai.APIStatusError as e:
