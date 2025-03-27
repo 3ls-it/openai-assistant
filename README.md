@@ -19,7 +19,9 @@ of each new chat, the chat history file is uploaded. You will
 see that when the assistants object is instantiated, the tools
 'file_search' and 'code_interpreter' are loaded. See:  
 https://platform.openai.com/docs/assistants/overview  
-At the time of this writing, the Assistants API is still Beta.  
+  At the time of this writing, the Assistants API is slated to
+be depricated in favour of the newer Responses API sometime
+in 2026.  
   
   You will need to choose a ChatGPT model that works with
 this API, not all do.  
