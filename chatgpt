@@ -30,17 +30,21 @@ https://platform.openai.com/docs/models
 -J Adams jfa63[at]duck[dot]com March 2025
 """
 
-import openai
 import os
-import readline
+import readline # Keep 
 import sys
 
+import openai
 from openai import OpenAI
 from openai import AssistantEventHandler
 
 from typing_extensions import override
 from prompt_toolkit import PromptSession
 from prompt_toolkit.key_binding import KeyBindings
+from rich import print
+# Working on output formatting: 
+#from rich.console import Console
+#from rich.markdown import Markdown
 
 
   
@@ -59,6 +63,8 @@ assistant_name = '' # Your assistant's name
 session = PromptSession(multiline=True)
 # Define custom key bindings
 kb = KeyBindings()
+# Create a Rich Console 
+#console = Console()
 
 
 # Define a key combination (e.g., Tab+Enter) to submit input
@@ -68,7 +74,7 @@ def _(event):
 # End _() 
 
 
-def file_upload(client, vector_store, filename) -> bool :
+def file_upload(client, vector_store, filename: str) -> bool :
     # Ready the files for upload to OpenAI 
     # filenames relative to homedir. 
     file_paths = [filename]
@@ -81,9 +87,9 @@ def file_upload(client, vector_store, filename) -> bool :
     )
 
     # Print the status and the file counts of the batch.
-    print("File upload: " + file_batch.status)
-    print(file_batch.file_counts)
-    print("")
+    print(f"Uploading: [blue]{filename}[/blue]\n"+file_batch.status)
+    #print(file_batch.file_counts)
+    #print("")
     return True
 # End file_upload()  
 
@@ -95,13 +101,14 @@ class EventHandler(AssistantEventHandler):
     def on_text_created(self, text) -> None:
         # Write to logfile. 
         lf.write(f'{assistant_name}: ')
-        print(f'\n{assistant_name}: ', end='', flush=True)
+        print(f'\n[#f5d676]{assistant_name}:[/#f5d676] ', end='', flush=True)
     
     @override
     def on_text_delta(self, delta, snapshot):
         resp = str(delta.value)
-        # Write to logfile. 
+        # Write delta to logfile. 
         lf.write(resp)
+        # Print delta  
         print(resp, end='')
     
     def on_tool_call_created(self, tool_call):
@@ -112,15 +119,18 @@ class EventHandler(AssistantEventHandler):
             if delta.code_interpreter.input:
                 print(delta.code_interpreter.input, end='', flush=True)
             if delta.code_interpreter.outputs:
-                print(f'\n\nOutput >', flush=True)
+                print('\n\nOutput >', flush=True)
                 for output in delta.code_interpreter.outputs:
                     if output.type == 'logs':
                         print(f'\n{output.logs}', flush=True)
-# End class  
+# End class EventHandler() 
 
 
 
 def main():
+    # Clear terminal 
+    os.system('clear')
+
     # Instantiate an OpenAI object. 
     try:
         client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
@@ -135,7 +145,7 @@ def main():
 
     # Create and configure an Assistant object. 
     assistant = client.beta.assistants.create(
-        instructions = f"You are {assistant_name}, {your_name}'s personal AI assistant. All coding and programming queries refer to Unix-like environments unless otherwise noted.",
+        instructions = f"You are {assistant_name}, {your_name}'s personal AI assistant. Where possible, provide citations",
         name = assistant_name,
         tools = [{"type": "code_interpreter"},
                {"type": "file_search"}],
@@ -153,18 +163,18 @@ def main():
           assistant_id=assistant.id,
           tool_resources={"file_search":
                          {"vector_store_ids": [vector_store.id]}},
-    )
+    ) 
+    
 
     # Create Thread instance. 
     thread = client.beta.threads.create()
 
 
-    # We take user input, and create a message,  
+    # We take user input, create a message,  
     # create a Run, then stream the whole of the response. 
-    print(f'\nHow can I help you {your_name}?\n')
+    print(f'[#f5d676]\nHow can I help you {your_name}?\n[/#f5d676]')
     while True:
         # Take user input. 
-        #query = input("> ")
         try:
             # Get user input with custom key bindings
             query = session.prompt('>> ', key_bindings=kb)
@@ -172,7 +182,7 @@ def main():
             break
 
         if query == "Done":
-            print(f'Bye! -{assistant_name}')
+            print(f'[#f5d676]Bye! -{assistant_name}[/#f5d676]')
             break
 
         if query == "Upload":
@@ -192,10 +202,11 @@ def main():
                         )
                     except openai.BadRequestError as e:
                         print("Recieved a BadRequestError from OpenAI.")
-                        print("This could mean that the file type is unsupported.\n\n")
+                        print("This could mean that the file type is unsupported.\n")
+                        print(e.__cause__)
                         continue
                 else:
-                    print("Cancelled\n\n")
+                    print("[red]Cancelled[/red]\n\n")
                     continue
             else:
                 print("The file:")
@@ -206,33 +217,33 @@ def main():
         try:
             # Write the query to logfile. 
             quest = "Me: " + query
-            lf.write(quest+"\n\n\n")
+            lf.write(quest+"\n\n")
 
             # Create a message from the user query. 
-            message = client.beta.threads.messages.create(
-                thread_id=thread.id, role="user",
-                content=query,
+            client.beta.threads.messages.create(
+                    thread_id=thread.id,
+                    role="user",
+                    content=query
             )
 
             # Then, we use the `stream` SDK helper 
             # with the `EventHandler` class to create the Run 
             # and stream the response.
             with client.beta.threads.runs.stream(
-                thread_id=thread.id,
-                assistant_id=assistant.id,
-                instructions = "Do not search uploaded files, unless asked to. \
-                                Where possible, provide citations",
-                event_handler=EventHandler(),
+                    thread_id=thread.id,
+                    assistant_id=assistant.id,
+                    event_handler=EventHandler(),
                 ) as stream:
                         stream.until_done()
-                        lf.write("\n\n\n")
+                        lf.write("\n\n")
                         print("\n\n")
 
         except openai.APIConnectionError as e:
             print("The server could not be reached")
-            print(e.__cause__)  # underlying Exception, likely raised within httpx.
+            print(e.__cause__)  # an underlying Exception, likely raised within httpx.
         except openai.RateLimitError as e:
             print("A 429 status code was received; we should back off a bit.")
+            print(e.__cause__)
         except openai.APIStatusError as e:
             print("A non-200-range status code was received")
             print(e.status_code)
