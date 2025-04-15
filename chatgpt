@@ -31,7 +31,7 @@ https://platform.openai.com/docs/models
 """
 
 import os
-import readline # Keep 
+import readline
 import sys
 
 import openai
@@ -42,9 +42,8 @@ from typing_extensions import override
 from prompt_toolkit import PromptSession
 from prompt_toolkit.key_binding import KeyBindings
 from rich import print
-# Working on output formatting: 
-#from rich.console import Console
-#from rich.markdown import Markdown
+from rich.console import Console
+from rich.markdown import Markdown
 
 
   
@@ -63,8 +62,8 @@ assistant_name = '' # Your assistant's name
 session = PromptSession(multiline=True)
 # Define custom key bindings
 kb = KeyBindings()
-# Create a Rich Console 
-#console = Console()
+# Create a Rich Console for response display
+console = Console()
 
 
 # Define a key combination (e.g., Tab+Enter) to submit input
@@ -80,8 +79,8 @@ def file_upload(client, vector_store, filename: str) -> bool :
     file_paths = [filename]
     file_streams = [open(path, "rb") for path in file_paths]
 
-    # Use the upload and poll SDK helper to upload the files, add them to the vector store,
-    # and poll the status of the file batch for completion.
+    # Use the upload and poll SDK helper to upload the files,
+    # add them to the vector store,
     file_batch = client.vector_stores.file_batches.upload_and_poll(
             vector_store_id=vector_store.id, files=file_streams
     )
@@ -96,7 +95,10 @@ def file_upload(client, vector_store, filename: str) -> bool :
 
 # Define an EventHandler class overriding two methods   
 # to handle the events in the response stream. 
+# Added text attribute to collect deltas.
 class EventHandler(AssistantEventHandler):    
+    text = ''
+
     @override
     def on_text_created(self, text) -> None:
         # Write to logfile. 
@@ -108,8 +110,8 @@ class EventHandler(AssistantEventHandler):
         resp = str(delta.value)
         # Write delta to logfile. 
         lf.write(resp)
-        # Print delta  
-        print(resp, end='')
+        # Concatenate deltas for display. 
+        self.text += resp
     
     def on_tool_call_created(self, tool_call):
         print(f'\n> {tool_call.type}\n', flush=True)
@@ -176,7 +178,7 @@ def main():
     while True:
         # Take user input. 
         try:
-            # Get user input with custom key bindings
+            # Get user input; custom key bindings
             query = session.prompt('>> ', key_bindings=kb)
         except (EOFError, KeyboardInterrupt):
             break
@@ -228,13 +230,16 @@ def main():
 
             # Then, we use the `stream` SDK helper 
             # with the `EventHandler` class to create the Run 
-            # and stream the response.
+            # and stream the response. We then render and display
+            # the response using Console() and Markdown() from rich. 
             with client.beta.threads.runs.stream(
                     thread_id=thread.id,
                     assistant_id=assistant.id,
                     event_handler=EventHandler(),
                 ) as stream:
                         stream.until_done()
+                        md = Markdown(stream.text)
+                        console.print(md)
                         lf.write("\n\n")
                         print("\n\n")
 
