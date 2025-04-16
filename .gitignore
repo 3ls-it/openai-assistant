@@ -1,0 +1,3 @@
+# Ignore Vi backup files
+.*.un~
+.ruff_cache
