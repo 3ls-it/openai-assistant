@@ -1,28 +1,5 @@
-#!/usr/bin/env python3 
+#!/data/data/com.termux/files/usr/bin/env python3 
 """
-  This is a command-line ChatGPT client. I put this together
-for personal use using bits and pieces from the example code
-provided by OpenAI's documentation.
-https://platform.openai.com/docs
-
-  It was developed and is used on a Unix-like systems with no
-consideration for that Other OS, though it should work on
-most any platform.
-
-  To use this client, you will need OpenAI API credentials:
-https://platform.openai.com/docs/overview
-
-  The Assitants API is used for this client. This API provides
-in-session memory, which is not persistent accross chats. To
-provide a chat history, we log the chat dialogue. At the start
-of each new chat, the chat history file is uploaded. You will
-see that when the assistants object is instanciated, the tools
-'file_search' and 'code_interpreter' are loaded. See:
-https://platform.openai.com/docs/assistants/overview
-At the time of this writing, the Assistants API is slated to
-be depricated in favour of the newer Responses API sometime
-in 2026.
-
   You will need to choose a ChatGPT model that works with
 this API, not all do.
 https://platform.openai.com/docs/models
@@ -38,30 +15,37 @@ import openai
 from openai import OpenAI
 from openai import AssistantEventHandler
 
-from typing_extensions import override
-from prompt_toolkit import PromptSession
-from prompt_toolkit.key_binding import KeyBindings
 from rich import print
 from rich.console import Console
 from rich.markdown import Markdown
 
+from typing_extensions import override
+from prompt_toolkit import PromptSession
+from prompt_toolkit.key_binding import KeyBindings
 
-  
+from python_settings import settings
 homedir = os.path.expanduser("~") + "/"
-logfile = homedir + ".chatgpt_log.txt"
+sys.path.append(homedir + ".openai")
+from settings import (TEMP,
+                      MODEL,
+                      YOUR_NAME,
+                      ASSISTANT_NAME)
+
+
+gpt_model = MODEL
+temp = TEMP
+your_name = YOUR_NAME
+assistant_name = ASSISTANT_NAME
+
+logfile = homedir + ".openai/chatgpt_log.txt"
 lf = open(logfile, 'a', encoding='utf-8')
-# Check the current model choices and choose the one that
-# works for you and with the Assistants API 
-gpt_model = 'gpt-4.5-preview'
-#gpt_model = 'gpt-4o'
-temp = 0.3 # range 0.0 - 2.0
-your_name = '' # Your name 
-assistant_name = '' # Your assistant's name 
 
 # Create a PromptSession object
 session = PromptSession(multiline=True)
+
 # Define custom key bindings
 kb = KeyBindings()
+
 # Create a Rich Console for response display
 console = Console()
 
@@ -79,8 +63,8 @@ def file_upload(client, vector_store, filename: str) -> bool :
     file_paths = [filename]
     file_streams = [open(path, "rb") for path in file_paths]
 
-    # Use the upload and poll SDK helper to upload the files,
-    # add them to the vector store,
+    # Use the upload and poll SDK helper to upload the files, add them to the vector store,
+    # and poll the status of the file batch for completion.
     file_batch = client.vector_stores.file_batches.upload_and_poll(
             vector_store_id=vector_store.id, files=file_streams
     )
@@ -95,7 +79,7 @@ def file_upload(client, vector_store, filename: str) -> bool :
 
 # Define an EventHandler class overriding two methods   
 # to handle the events in the response stream. 
-# Added text attribute to collect deltas.
+# Added text attribute 
 class EventHandler(AssistantEventHandler):    
     text = ''
 
@@ -147,7 +131,7 @@ def main():
 
     # Create and configure an Assistant object. 
     assistant = client.beta.assistants.create(
-        instructions = f"You are {assistant_name}, {your_name}'s personal AI assistant. Where possible, provide citations",
+        instructions = f"You are {assistant_name}, {your_name}'s personal AI assistant. All coding and programming queries refer to Unix-like environments unless otherwise noted. Where possible, provide citations",
         name = assistant_name,
         tools = [{"type": "code_interpreter"},
                {"type": "file_search"}],
@@ -178,7 +162,7 @@ def main():
     while True:
         # Take user input. 
         try:
-            # Get user input; custom key bindings
+            # Get user input with custom key bindings
             query = session.prompt('>> ', key_bindings=kb)
         except (EOFError, KeyboardInterrupt):
             break
