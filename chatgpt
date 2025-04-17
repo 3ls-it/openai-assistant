@@ -1,10 +1,14 @@
-#!/data/data/com.termux/files/usr/bin/env python3 
+#!/usr/bin/env python3 
 """
   You will need to choose a ChatGPT model that works with
 this API, not all do.
 https://platform.openai.com/docs/models
+  For my own use, I've created the directory
+~/.openai/
+to hold chatgpt_log.txt and settings.py. Set this up in
+whatever way suits you.
 
--J Adams jfa63[at]duck[dot]com March 2025
+-J Adams jfa63[at]duck[dot]com April 2025
 """
 
 import os
@@ -29,13 +33,15 @@ sys.path.append(homedir + ".openai")
 from settings import (TEMP,
                       MODEL,
                       YOUR_NAME,
-                      ASSISTANT_NAME)
+                      ASSISTANT_NAME,
+                      OPENAI_API_KEY)
 
 
 gpt_model = MODEL
 temp = TEMP
 your_name = YOUR_NAME
 assistant_name = ASSISTANT_NAME
+api_key = OPENAI_API_KEY
 
 logfile = homedir + ".openai/chatgpt_log.txt"
 lf = open(logfile, 'a', encoding='utf-8')
@@ -63,14 +69,15 @@ def file_upload(client, vector_store, filename: str) -> bool :
     file_paths = [filename]
     file_streams = [open(path, "rb") for path in file_paths]
 
-    # Use the upload and poll SDK helper to upload the files, add them to the vector store,
-    # and poll the status of the file batch for completion.
+    # Use the upload and poll SDK helper to upload the files,
+    # add them to the vector store,
+    # then poll the status of the file batch for completion.
     file_batch = client.vector_stores.file_batches.upload_and_poll(
             vector_store_id=vector_store.id, files=file_streams
     )
 
     # Print the status and the file counts of the batch.
-    print(f"Uploading: [blue]{filename}[/blue]\n"+file_batch.status)
+    print(f"Uploaded: [blue]{filename}[/blue]\n"+file_batch.status)
     #print(file_batch.file_counts)
     #print("")
     return True
@@ -116,10 +123,15 @@ class EventHandler(AssistantEventHandler):
 def main():
     # Clear terminal 
     os.system('clear')
+    print("[bold blue]Uploading chat log file...[/bold blue]")
 
     # Instantiate an OpenAI object. 
     try:
-        client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
+        # Use this if your key is in settings.py 
+        client = OpenAI(api_key=api_key)
+        # Use this if you export your key as an evironmental variable. 
+        #client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
+
     except openai.APIConnectionError as e:
         print("The server could not be reached")
         print(e.__cause__)  # an underlying Exception, likely raised within httpx.
@@ -143,7 +155,6 @@ def main():
     vector_store = client.vector_stores.create(name="Chat History")
     file_upload(client, vector_store, logfile)
 
-
     # Update Assistant object 
     assistant = client.beta.assistants.update(
           assistant_id=assistant.id,
@@ -151,10 +162,8 @@ def main():
                          {"vector_store_ids": [vector_store.id]}},
     ) 
     
-
     # Create Thread instance. 
     thread = client.beta.threads.create()
-
 
     # We take user input, create a message,  
     # create a Run, then stream the whole of the response. 
@@ -224,8 +233,8 @@ def main():
                         stream.until_done()
                         md = Markdown(stream.text)
                         console.print(md)
-                        lf.write("\n\n")
-                        print("\n\n")
+                        lf.write("\n")
+                        print("\n")
 
         except openai.APIConnectionError as e:
             print("The server could not be reached")
