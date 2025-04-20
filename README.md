@@ -1,7 +1,7 @@
 # ChatGPT Assitant Client
   
   This is a command-line ChatGPT client. I put this together
-for personal use using bits and pieces from the example code
+for personal, and it uses some bits and pieces from example code
 provided by OpenAI's documentation.  
 https://platform.openai.com/docs  
   
@@ -14,11 +14,15 @@ https://platform.openai.com/docs/overview
   
   The Assitants API is used for this client. This API provides
 in-session memory, which is not persistent accross chats. To
-provide a chat history, we log the chat dialogue. At the start
-of each new chat, the chat history file is uploaded. You will
+provide a chat history, we log the chat dialogue. The chat log
+and settings file live in `~/.openai/`. You will need to edit the
+provided `settings.py` making sure to put your API there.
+  
+At the start of each new chat, the chat history file is uploaded. You will
 see that when the assistants object is instantiated, the tools
 'file_search' and 'code_interpreter' are loaded. See:  
 https://platform.openai.com/docs/assistants/overview  
+  
   At the time of this writing, the Assistants API is slated to
 be depricated in favour of the newer Responses API sometime
 in 2026.  

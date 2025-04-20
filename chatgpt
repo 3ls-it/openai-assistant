@@ -3,10 +3,6 @@
   You will need to choose a ChatGPT model that works with
 this API, not all do.
 https://platform.openai.com/docs/models
-  For my own use, I've created the directory
-~/.openai/
-to hold chatgpt_log.txt and settings.py. Set this up in
-whatever way suits you.
 
 -J Adams jfa63[at]duck[dot]com April 2025
 """
@@ -27,9 +23,9 @@ from typing_extensions import override
 from prompt_toolkit import PromptSession
 from prompt_toolkit.key_binding import KeyBindings
 
-from python_settings import settings
 homedir = os.path.expanduser("~") + "/"
-sys.path.append(homedir + ".openai")
+os.makedirs(homedir + ".openai", exist_ok=True)
+sys.path.insert(0, homedir + ".openai")
 from settings import (TEMP,
                       MODEL,
                       YOUR_NAME,
@@ -43,6 +39,7 @@ your_name = YOUR_NAME
 assistant_name = ASSISTANT_NAME
 api_key = OPENAI_API_KEY
 
+# Open log file in append mode 
 logfile = homedir + ".openai/chatgpt_log.txt"
 lf = open(logfile, 'a', encoding='utf-8')
 
@@ -76,6 +73,10 @@ def file_upload(client, vector_store, filename: str) -> bool :
             vector_store_id=vector_store.id, files=file_streams
     )
 
+    # Close the file streams  
+    for fs in file_streams:
+        fs.close()
+
     # Print the status and the file counts of the batch.
     print(f"Uploaded: [blue]{filename}[/blue]\n"+file_batch.status)
     #print(file_batch.file_counts)
@@ -84,11 +85,17 @@ def file_upload(client, vector_store, filename: str) -> bool :
 # End file_upload()  
 
 
-# Define an EventHandler class overriding two methods   
+# Extend the EventHandler class overriding two methods   
 # to handle the events in the response stream. 
 # Added text attribute 
 class EventHandler(AssistantEventHandler):    
-    text = ''
+    text: str
+    
+    def __init__(self):
+        # Initialize handler to set up internal state
+        super().__init__()
+        # Accumulate streamed text here
+        self.text = ''
 
     @override
     def on_text_created(self, text) -> None:
@@ -132,38 +139,41 @@ def main():
         # Use this if you export your key as an evironmental variable. 
         #client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
 
+        # Create and configure an Assistant object. 
+        assistant = client.beta.assistants.create(
+                instructions = f"You are {assistant_name}, {your_name}'s personal AI assistant. All coding and programming queries refer to Unix-like environments unless otherwise noted. Where possible, provide citations",
+                name = assistant_name,
+                tools = [{"type": "code_interpreter"},
+                         {"type": "file_search"}],
+                         model = gpt_model,
+                         temperature = temp
+        )
+
+        # Here we set up a Vector Store to hold the chat history.
+        vector_store = client.vector_stores.create(name="Chat History")
+        file_upload(client, vector_store, logfile)
+
+        # Update Assistant object 
+        assistant = client.beta.assistants.update(
+                assistant_id=assistant.id,
+                tool_resources={"file_search":
+                                {"vector_store_ids": [vector_store.id]}},
+        ) 
+    
+        # Create Thread instance. 
+        thread = client.beta.threads.create()
+
     except openai.APIConnectionError as e:
         print("The server could not be reached")
-        print(e.__cause__)  # an underlying Exception, likely raised within httpx.
+        print(e)  # an underlying Exception, likely raised within httpx.
         sys.exit(1)
     except openai.AuthenticationError as e:
         print("Check your API key or token and make sure it is correct and active.")
-        print(e.__cause__)  # an underlying Exception, likely raised within httpx.
+        print(e)  # an underlying Exception, likely raised within httpx.
         sys.exit(1)
-
-    # Create and configure an Assistant object. 
-    assistant = client.beta.assistants.create(
-        instructions = f"You are {assistant_name}, {your_name}'s personal AI assistant. All coding and programming queries refer to Unix-like environments unless otherwise noted. Where possible, provide citations",
-        name = assistant_name,
-        tools = [{"type": "code_interpreter"},
-               {"type": "file_search"}],
-        model = gpt_model,
-        temperature = temp
-    )
-
-    # Here we set up a Vector Store to hold the chat history.
-    vector_store = client.vector_stores.create(name="Chat History")
-    file_upload(client, vector_store, logfile)
-
-    # Update Assistant object 
-    assistant = client.beta.assistants.update(
-          assistant_id=assistant.id,
-          tool_resources={"file_search":
-                         {"vector_store_ids": [vector_store.id]}},
-    ) 
-    
-    # Create Thread instance. 
-    thread = client.beta.threads.create()
+    except Exception as e:
+        print(e)
+        sys.exit(1)
 
     # We take user input, create a message,  
     # create a Run, then stream the whole of the response. 
@@ -186,7 +196,8 @@ def main():
                 print("You have chosen the file:")
                 print(homedir + fname)
                 resp = input("Is this correct? [Y/n] ")
-                if resp == "Y":
+                # Handle typical "yes" responses 
+                if resp.lower() in ("y", "yes", ""):
                     try:
                         file_upload(client, vector_store, homedir+fname)
                         # Update Assistant object 
@@ -195,10 +206,12 @@ def main():
                               tool_resources={"file_search":
                                              {"vector_store_ids": [vector_store.id]}},
                         )
+                        # Prevent sending "Upload" as a chat message
+                        continue
                     except openai.BadRequestError as e:
                         print("Recieved a BadRequestError from OpenAI.")
                         print("This could mean that the file type is unsupported.\n")
-                        print(e.__cause__)
+                        print(e)
                         continue
                 else:
                     print("[red]Cancelled[/red]\n\n")
@@ -238,10 +251,10 @@ def main():
 
         except openai.APIConnectionError as e:
             print("The server could not be reached")
-            print(e.__cause__)  # an underlying Exception, likely raised within httpx.
+            print(e)  # an underlying Exception, likely raised within httpx.
         except openai.RateLimitError as e:
             print("A 429 status code was received; we should back off a bit.")
-            print(e.__cause__)
+            print(e)
         except openai.APIStatusError as e:
             print("A non-200-range status code was received")
             print(e.status_code)
