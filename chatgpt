@@ -3,6 +3,7 @@
   You will need to choose a ChatGPT model that works with
 this API, not all do.
 https://platform.openai.com/docs/models
+Set the model in settings.py
 
 -J Adams jfa63[at]duck[dot]com April 2025
 """
@@ -87,7 +88,7 @@ def file_upload(client, vector_store, filename: str) -> bool :
 
 
 # Extend the EventHandler class overriding two methods   
-# to handle the events in the response stream. 
+# that handle the events in the response stream. 
 # Added text attribute 
 class EventHandler(AssistantEventHandler):    
     text: str
@@ -107,9 +108,9 @@ class EventHandler(AssistantEventHandler):
     @override
     def on_text_delta(self, delta, snapshot):
         resp = str(delta.value)
-        # Write delta to logfile. 
+        # Write text delta to logfile. 
         lf.write(resp)
-        # Concatenate deltas for display. 
+        # Concatenate text deltas for display. 
         self.text += resp
     
     def on_tool_call_created(self, tool_call):
@@ -135,14 +136,10 @@ def main():
 
     # Instantiate an OpenAI object. 
     try:
-        # Use this if your key is in settings.py 
         client = OpenAI(api_key=api_key)
-        # Use this if you export your key as an evironmental variable. 
-        #client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
-
         # Create and configure an Assistant object. 
         assistant = client.beta.assistants.create(
-                instructions = f"You are {assistant_name}, {your_name}'s personal AI assistant. All coding and programming queries refer to Unix-like environments unless otherwise noted. Where possible, provide citations",
+                instructions = f"You are {assistant_name}, {your_name}'s personal AI assistant. Where possible, provide citations.",
                 name = assistant_name,
                 tools = [{"type": "code_interpreter"},
                          {"type": "file_search"}],
@@ -152,7 +149,7 @@ def main():
 
         # Set up or retrieve a Vector Store to hold the chat history.
         if VECTOR_STORE_ID:
-            # Retrieve existing vector store by ID
+            # Retrieve existing vector store by ID 
             vector_store = client.vector_stores.retrieve(vector_store_id=VECTOR_STORE_ID)
         else:
             vector_store = client.vector_stores.create(name="Chat History")
@@ -160,7 +157,7 @@ def main():
             print("[yellow]Please update VECTOR_STORE_ID in settings.py to reuse this store in future runs.[/yellow]")
         file_upload(client, vector_store, logfile)
 
-        # Update Assistant object with vector store
+        # Update Assistant object with vector store 
         assistant = client.beta.assistants.update(
                 assistant_id=assistant.id,
                 tool_resources={"file_search":
