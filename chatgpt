@@ -30,7 +30,8 @@ from settings import (TEMP,
                       MODEL,
                       YOUR_NAME,
                       ASSISTANT_NAME,
-                      OPENAI_API_KEY)
+                      OPENAI_API_KEY,
+                      VECTOR_STORE_ID)
 
 
 gpt_model = MODEL
@@ -149,16 +150,22 @@ def main():
                          temperature = temp
         )
 
-        # Here we set up a Vector Store to hold the chat history.
-        vector_store = client.vector_stores.create(name="Chat History")
+        # Set up or retrieve a Vector Store to hold the chat history.
+        if VECTOR_STORE_ID:
+            # Retrieve existing vector store by ID
+            vector_store = client.vector_stores.retrieve(vector_store_id=VECTOR_STORE_ID)
+        else:
+            vector_store = client.vector_stores.create(name="Chat History")
+            print(f"[bold green]Created new vector store with ID {vector_store.id}[/bold green]")
+            print("[yellow]Please update VECTOR_STORE_ID in settings.py to reuse this store in future runs.[/yellow]")
         file_upload(client, vector_store, logfile)
 
-        # Update Assistant object 
+        # Update Assistant object with vector store
         assistant = client.beta.assistants.update(
                 assistant_id=assistant.id,
                 tool_resources={"file_search":
                                 {"vector_store_ids": [vector_store.id]}},
-        ) 
+        )
     
         # Create Thread instance. 
         thread = client.beta.threads.create()
