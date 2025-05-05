@@ -4,7 +4,7 @@
   
   This is a command-line OpenAI Assistant client. I put this together
 for personal use as I do most of my work in the shell.
-  It was developed and is used on a Unix-like systems with no
+  It was developed and is used on Unix-like systems with no
 consideration for that Other OS, though it should work on
 any Unix-like platform.  
   
