@@ -1,6 +1,6 @@
-# OpenAI Assistant CLI Client  
+## OpenAI Assistant CLI Client  
   
-__About__  
+### About  
   
   This is a command-line OpenAI Assistant client. I put this together
 for personal use as I do most of my work in the shell.
@@ -14,8 +14,7 @@ https://platform.openai.com/docs/overview
   The Assitants API is used for this client. This API provides
 in-session memory, which is not persistent accross chats. To
 provide a chat history, we log the chat dialogue. The chat log
-and settings file live in `~/.openai/`. You will need to edit the
-provided `settings.py` making sure to put your API key there.  
+and settings file live in `~/.openai/`.  
   
   At the start of each new chat, the chat history file is uploaded to
 a Vector Store. You will see that when the Assistant object is first
@@ -32,13 +31,14 @@ to use the Responses API.
 this API, not all do. See:  
 https://platform.openai.com/docs/models  
   
-- J Adams jfa63[at]duck[dot]com May 2025   
+J Adams jfa63[at]duck[dot]com May 2025   
   
-__Features__  
+  
+### Features  
   
 - **Seamless Configuration**  
   • Auto-generates `~/.openai/settings.py` with all required and optional keys  
-  • Built-in defaults for `MODEL` (`gpt-4.1`) and `TEMP` (0.3)  
+  • Built-in defaults for `MODEL` (gpt-4.1) and `TEMP` (0.3)  
   • Interactive prompting for missing values (especially your `OPENAI_API_KEY`)
 
 - **Persistent Settings & IDs**  
@@ -66,7 +66,8 @@ __Features__
   • Single executable script (no additional files to copy)  
   • Minimal dependencies, all pinned via `requirements.txt`  
   
-__Usage__
+  
+### Usage
   
 1. Install dependencies  
    ```bash
@@ -79,7 +80,7 @@ __Usage__
    ./openai-assistant
    ```
    – Enter your `OPENAI_API_KEY` when prompted.  
-   – Defaults for `MODEL` (`gpt-4.1`) and `TEMP` (`0.3`) are applied automatically.  
+   – Defaults for `MODEL` (gpt-4.1) and `TEMP` (0.3) are applied automatically.  
    – You’ll be offered to save newly created `ASSISTANT_ID` and `VECTOR_STORE_ID` back into your settings file.
 
 3. Chat  
