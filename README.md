@@ -12,7 +12,7 @@ any Unix-like platform.
 https://platform.openai.com/docs/overview   
   
   The Assitants API is used for this client. This API provides
-in-session memory, which is not persistent accross chats. To
+in-session memory, which is not persistent across chats. To
 provide a chat history, we log the chat dialogue. The chat log
 and settings file live in `~/.openai/`.  
   
@@ -90,7 +90,7 @@ J Adams jfa63[at]duck[dot]com May 2025
 
 4. Configuration  
    Edit `~/.openai/settings.py` directly to tweak:
-   - `MODEL` (e.g. `gpt-3.5-turbo`, `gpt-4`)  
+   - `MODEL` (e.g. gpt-3.5-turbo, gpt-4)  
    - `TEMP` (0.0–2.0)  
    - Optional fields: `YOUR_NAME`, `ASSISTANT_NAME`, `FURTHER_INSTRUCTIONS`.
 
