@@ -30,6 +30,7 @@ from pathlib import Path
 
 
 ## Some global definitions 
+__version__ = '1.0.0'
 # Define home directory and config paths
 homedir     = str(Path.home()) + "/"
 CONFIG_DIR  = Path(homedir) / ".openai"
