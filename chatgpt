@@ -30,7 +30,8 @@ from settings import (TEMP,
                       ASSISTANT_NAME,
                       FURTHER_INSTRUCTIONS,
                       OPENAI_API_KEY,
-                      VECTOR_STORE_ID)
+                      VECTOR_STORE_ID,
+                      ASSISTANT_ID)
 
 
 gpt_model = MODEL
@@ -137,15 +138,21 @@ def main():
     # Instantiate an OpenAI object. 
     try:
         client = OpenAI(api_key=api_key)
-        # Create and configure an Assistant object. 
-        assistant = client.beta.assistants.create(
-                instructions = instructions + FURTHER_INSTRUCTIONS,
-                name = assistant_name,
-                tools = [{"type": "code_interpreter"},
-                         {"type": "file_search"}],
-                         model = gpt_model,
-                         temperature = temp
-        )
+        # Set up or retrieve an Assistant to handle requests.
+        if ASSISTANT_ID:
+            assistant = client.beta.assistants.retrieve(
+                assistant_id=ASSISTANT_ID
+            )
+        else:
+            assistant = client.beta.assistants.create(
+                instructions=instructions + FURTHER_INSTRUCTIONS,
+                name=assistant_name,
+                tools=[{"type": "code_interpreter"}, {"type": "file_search"}],
+                model=gpt_model,
+                temperature=temp
+            )
+            print(f"[bold green]Created new assistant with ID {assistant.id}[/bold green]")
+            print("[yellow]Please update ASSISTANT_ID in settings.py to reuse this assistant in future runs.[/yellow]")
 
         # Set up or retrieve a Vector Store to hold the chat history.
         if VECTOR_STORE_ID:
