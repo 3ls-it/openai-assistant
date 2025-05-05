@@ -1,11 +1,8 @@
 #!/usr/bin/env python3 
 """
-  You will need to choose a ChatGPT model that works with
-this API, not all do.
 https://platform.openai.com/docs/models
-Set the model in settings.py
 
--J Adams jfa63[at]duck[dot]com April 2025
+-J Adams jfa63[at]duck[dot]com May 2025
 """
 
 import os
@@ -31,6 +28,7 @@ from settings import (TEMP,
                       MODEL,
                       YOUR_NAME,
                       ASSISTANT_NAME,
+                      FURTHER_INSTRUCTIONS,
                       OPENAI_API_KEY,
                       VECTOR_STORE_ID)
 
@@ -40,6 +38,8 @@ temp = TEMP
 your_name = YOUR_NAME
 assistant_name = ASSISTANT_NAME
 api_key = OPENAI_API_KEY
+instructions = f"You are {assistant_name}, {your_name}'s personal AI assistant."
+
 
 # Open log file in append mode 
 logfile = homedir + ".openai/chatgpt_log.txt"
@@ -88,7 +88,7 @@ def file_upload(client, vector_store, filename: str) -> bool :
 
 
 # Extend the EventHandler class overriding two methods   
-# that handle the events in the response stream. 
+# to handle the events in the response stream. 
 # Added text attribute 
 class EventHandler(AssistantEventHandler):    
     text: str
@@ -108,9 +108,9 @@ class EventHandler(AssistantEventHandler):
     @override
     def on_text_delta(self, delta, snapshot):
         resp = str(delta.value)
-        # Write text delta to logfile. 
+        # Write delta to logfile. 
         lf.write(resp)
-        # Concatenate text deltas for display. 
+        # Concatenate deltas for display. 
         self.text += resp
     
     def on_tool_call_created(self, tool_call):
@@ -139,7 +139,7 @@ def main():
         client = OpenAI(api_key=api_key)
         # Create and configure an Assistant object. 
         assistant = client.beta.assistants.create(
-                instructions = f"You are {assistant_name}, {your_name}'s personal AI assistant. Where possible, provide citations.",
+                instructions = instructions + FURTHER_INSTRUCTIONS,
                 name = assistant_name,
                 tools = [{"type": "code_interpreter"},
                          {"type": "file_search"}],
@@ -149,7 +149,7 @@ def main():
 
         # Set up or retrieve a Vector Store to hold the chat history.
         if VECTOR_STORE_ID:
-            # Retrieve existing vector store by ID 
+            # Retrieve existing vector store by ID
             vector_store = client.vector_stores.retrieve(vector_store_id=VECTOR_STORE_ID)
         else:
             vector_store = client.vector_stores.create(name="Chat History")
@@ -157,7 +157,7 @@ def main():
             print("[yellow]Please update VECTOR_STORE_ID in settings.py to reuse this store in future runs.[/yellow]")
         file_upload(client, vector_store, logfile)
 
-        # Update Assistant object with vector store 
+        # Update Assistant object with vector store
         assistant = client.beta.assistants.update(
                 assistant_id=assistant.id,
                 tool_resources={"file_search":
@@ -190,7 +190,7 @@ def main():
         except (EOFError, KeyboardInterrupt):
             break
 
-        if query == "Done":
+        if query in ("done", "done\n", "Done", "Done\n"):
             print(f'[#f5d676]Bye! -{assistant_name}[/#f5d676]')
             break
 
@@ -228,8 +228,8 @@ def main():
 
         try:
             # Write the query to logfile. 
-            quest = "Me: " + query
-            lf.write(quest+"\n\n")
+            quest = "\n\nMe: " + query
+            lf.write(quest+"\n")
 
             # Create a message from the user query. 
             client.beta.threads.messages.create(
