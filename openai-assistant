@@ -217,9 +217,6 @@ lf = open(logfile, 'a', encoding='utf-8')
 
 
 def main():
-    # Open log file in append mode 
-    lf = open(logfile, 'a', encoding='utf-8')
-
     # Clear terminal 
     os.system('clear')
     print("[bold blue]Uploading chat log file...[/bold blue]")
