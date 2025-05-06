@@ -219,7 +219,6 @@ lf = open(logfile, 'a', encoding='utf-8')
 def main():
     # Clear terminal 
     os.system('clear')
-    print("[bold blue]Uploading chat log file...[/bold blue]")
 
     # Instantiate an OpenAI object. 
     try:
@@ -260,6 +259,9 @@ def main():
                 print(f"Updated VECTOR_STORE_ID in {CONFIG_PATH}")
             else:
                 print("VECTOR_STORE_ID not saved; will create new next run.")
+
+        # Upload chat log 
+        print("[bold blue]Uploading chat log file...[/bold blue]")
         file_upload(client, vector_store, logfile)
 
         # Update Assistant object with vector store
@@ -287,6 +289,7 @@ def main():
 
     # We take user input, create a message,  
     # create a Run, then stream the whole of the response. 
+    print(f'[bold green]Enter "Done" or "done" to quit session\n[/bold green]')
     print(f'[#f5d676]\nHow can I help you {your_name}?\n[/#f5d676]')
     while True:
         # Take user input. 
