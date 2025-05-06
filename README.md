@@ -86,8 +86,8 @@ J Adams jfa63[at]duck[dot]com May 2025
 3. Chat  
    – Multi-line input is supported (press Enter for a new line).  
    – Submit your message with **Tab+Enter**.  
-   – Responses stream in real-time, rendered as Markdown in your terminal.
-   - Quit session with **Done** or **done**.
+   – Responses stream in real-time, rendered as Markdown in your terminal.  
+   – Quit session with **Done** or **done**.
 
 4. Configuration  
    Edit `~/.openai/settings.py` directly to tweak:
