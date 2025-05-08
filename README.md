@@ -2,8 +2,10 @@
   
 ### About  
   
-  This is a command-line OpenAI Assistant client. I put this together
-for personal use as I do most of my work in the shell.
+  This is a terminal-based OpenAI Assistant client. I put this together
+for personal use as I do most of my work in the shell. This is not
+meant to take the place of OpenAI's Codex CLI tool, but is meant to
+be a general-purpose AI assistant.  
   It was developed and is used on Unix-like systems with no
 consideration for that Other OS, though it should work on
 any Unix-like platform.  
