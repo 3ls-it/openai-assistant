@@ -5,7 +5,6 @@ Released under the 2-Clause BSD license.
 """
 # Builtin imports 
 import os
-import readline
 import sys
 import traceback
 
@@ -30,7 +29,7 @@ from pathlib import Path
 
 
 ## Some global definitions 
-__version__ = '1.0.0'
+__version__ = '1.0.1'
 # Define home directory and config paths
 homedir     = str(Path.home()) + "/"
 CONFIG_DIR  = Path(homedir) / ".openai"
@@ -44,13 +43,14 @@ kb = KeyBindings()
 console = Console()
 
 # Required and optional settings 
-REQUIRED  = ("MODEL", "TEMP", "OPENAI_API_KEY")
-DEFAULTS  = {"MODEL": "gpt-4.1", "TEMP": 0.3}
-OPTIONAL  = ("YOUR_NAME", "ASSISTANT_NAME", "FURTHER_INSTRUCTIONS", "VECTOR_STORE_ID", "ASSISTANT_ID")
+REQUIRED  = ("MODEL", "TEMP", "YOUR_NAME", "ASSISTANT_NAME", "OPENAI_API_KEY")
+DEFAULTS  = {"MODEL": "gpt-4.1", "TEMP": 0.3, "YOUR_NAME": "User", "ASSISTANT_NAME": "OpenAI"}
+OPTIONAL  = ("FURTHER_INSTRUCTIONS", "VECTOR_STORE_ID", "ASSISTANT_ID")
 
 
 
 ## Helper functions 
+# Helper to load configuration settings 
 def load_settings():
     if CONFIG_PATH.is_file():
         return runpy.run_path(str(CONFIG_PATH))
@@ -91,6 +91,7 @@ def _(event):
 # End _() 
 
 
+# Upload file 
 def file_upload(client, vector_store, filename: str) -> bool :
     # Skip if the file is empty or missing
     if not os.path.isfile(filename) or os.path.getsize(filename) == 0:
@@ -289,7 +290,7 @@ def main():
 
     # We take user input, create a message,  
     # create a Run, then stream the whole of the response. 
-    print(f'[bold green]Enter "Done" or "done" to quit session\n[/bold green]')
+    print('[bold green]Enter "Done" or "done" to quit session\n[/bold green]')
     print(f'[#f5d676]\nHow can I help you {your_name}?\n[/#f5d676]')
     while True:
         # Take user input. 
