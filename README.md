@@ -78,7 +78,7 @@ J Adams jfa63[at]duck[dot]com May 2025
    ```
 
 2. Configure & Run  
-   Simply invoke the script; on first run it will auto-generate `~/.openai/settings.py` and prompt for required values.
+   Download the current release and unpack. Change to the release directory and simply invoke the script; on first run it will auto-generate `~/.openai/settings.py` and prompt for required values.
    ```bash
    chmod 750 openai-assistant
    ./openai-assistant
