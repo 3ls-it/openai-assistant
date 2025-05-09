@@ -78,10 +78,15 @@ J Adams jfa63[at]duck[dot]com May 2025
    ```
 
 2. Configure & Run  
-   Simply invoke the script; on first run it will auto-generate `~/.openai/settings.py` and prompt for required values:
+   Simply invoke the script; on first run it will auto-generate `~/.openai/settings.py` and prompt for required values.
    ```bash
+   chmod 750 openai-assistant
    ./openai-assistant
-   ```
+   ```  
+   or  
+   ```bash
+   python3 openai-assistant
+   ```  
    – Enter your `OPENAI_API_KEY` when prompted.  
    – Defaults for `MODEL` (gpt-4.1) and `TEMP` (0.3) are applied automatically.  
    – You’ll be offered to save newly created `ASSISTANT_ID` and `VECTOR_STORE_ID` back into your settings file.
