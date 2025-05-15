@@ -73,12 +73,13 @@ J Adams jfa63[at]duck[dot]com May 2025
 ### Usage
   
 1. Install dependencies  
+   Download the current release and unpack the archive. Change to the release directory and install the Python dependencies:  
    ```bash
    pip install -r requirements.txt
    ```
 
 2. Configure & Run  
-   Download the current release and unpack. Change to the release directory and simply invoke the script; on first run it will auto-generate `~/.openai/settings.py` and prompt for required values.
+   In the release directory, simply invoke the script; on first run it will auto-generate `~/.openai/settings.py` and prompt for required values.
    ```bash
    chmod 750 openai-assistant
    ./openai-assistant
