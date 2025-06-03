@@ -4,9 +4,12 @@ Copyright 2024, 2025 J Adams jfa63[at]duck[dot]com May 2025
 Released under the 2-Clause BSD license.
 """
 # Builtin imports 
+
 import os
 import sys
 import traceback
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # OpenAI imports 
 import openai
@@ -29,7 +32,7 @@ from pathlib import Path
 
 
 ## Some global definitions 
-__version__ = '1.0.1'
+__version__ = '1.0.2'
 # Define home directory and config paths
 homedir     = str(Path.home()) + "/"
 CONFIG_DIR  = Path(homedir) / ".openai"
@@ -92,29 +95,40 @@ def _(event):
 
 
 # Upload file 
-def file_upload(client, vector_store, filename: str) -> bool :
+# Upload and then trim the vector store so only the latest log file remains
+def file_upload(client, vector_store, filename: str) -> bool:
     # Skip if the file is empty or missing
     if not os.path.isfile(filename) or os.path.getsize(filename) == 0:
         print(f"Skipping empty file upload: {filename}")
         return False
-    # Ready the files for upload to OpenAI
-    # filenames relative to homedir.
     file_paths = [filename]
     file_streams = [open(path, "rb") for path in file_paths]
 
-    # Use the upload and poll SDK helper to upload the files,
-    # add them to the vector store,
-    # then poll the status of the file batch for completion.
+    # Upload files to the vector store
     file_batch = client.vector_stores.file_batches.upload_and_poll(
-            vector_store_id=vector_store.id, files=file_streams
+        vector_store_id=vector_store.id, files=file_streams
     )
 
-    # Close the file streams  
     for fs in file_streams:
         fs.close()
 
-    # Print the status and the file counts of the batch.
-    print(f"Uploaded: [blue]{filename}[/blue]\n"+file_batch.status)
+    print(f"Uploaded: [blue]{filename}[/blue]\n" + file_batch.status)
+
+    # --- Trimming logic: delete all files from vector store except this latest log file ---
+    file_list = client.vector_stores.files.list(vector_store_id=vector_store.id)
+    # Find the uploaded file by filename (match display name if possible)
+    keep_ids = set()
+    log_basename = os.path.basename(filename)
+    for f in file_list:
+        # Some SDKs use .filename, some .display_name, so check both
+        display_name = getattr(f, "display_name", None) or getattr(f, "filename", None)
+        if display_name and os.path.basename(display_name) == log_basename:
+            keep_ids.add(f.id)
+
+    for f in file_list:
+        if f.id not in keep_ids:
+            client.vector_stores.files.delete(vector_store_id=vector_store.id, file_id=f.id)
+            print(f"[yellow]Trimmed file from vector store:[/yellow] {f.id}")
     return True
 # End file_upload()  
 
