@@ -3,8 +3,9 @@
 Copyright 2024, 2025 J Adams jfa63[at]duck[dot]com
 Released under the 2-Clause BSD license.
 """
-__version__ = 'v1.0.3'
+__version__ = 'v1.0.4'
 __author__ = 'J. Adams jfa63[at]duck[dot]com'
+
 # Builtin imports 
 from datetime import datetime
 import os
@@ -228,6 +229,8 @@ def main():
     now = datetime.now()
     # Format as '9 June 2025 9:52pm'
     tstamp = now.strftime('%-d %B %Y %-I:%M%p').lower()
+    # Write timestamp to log file for session date 
+    lf.write(f"\n\nSession time stamp: {tstamp}")
 
     # Instantiate an OpenAI object. 
     try:
