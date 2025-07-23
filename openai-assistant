@@ -3,7 +3,7 @@
 Copyright 2024, 2025 J Adams jfa63[at]duck[dot]com
 Released under the 2-Clause BSD license.
 """
-__version__ = 'v1.0.4'
+__version__ = 'v1.0.5'
 __author__ = 'J. Adams jfa63[at]duck[dot]com'
 
 # Builtin imports 
