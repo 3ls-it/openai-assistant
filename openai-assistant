@@ -17,6 +17,7 @@ import warnings
 import openai
 from openai import OpenAI
 from openai import AssistantEventHandler
+from openai.types.vector_stores.vector_store_file_batch import VectorStoreFileBatch
 
 # Rich imports for output formatting 
 from rich import print
@@ -101,7 +102,7 @@ def _(event):
 
 # Upload file 
 # Upload and then trim the vector store so only the latest log file remains
-def file_upload(client, vector_store, filename: str) -> bool:
+def file_upload(client, vector_store, filename: str) -> VectorStoreFileBatch:
     # Skip if the file is empty or missing
     if not os.path.isfile(filename) or os.path.getsize(filename) == 0:
         print(f"Skipping empty file upload: {filename}", "[green]ENTER[/] to continue")
@@ -118,9 +119,7 @@ def file_upload(client, vector_store, filename: str) -> bool:
     for fs in file_streams:
         fs.close()
 
-    #print(f"Uploaded: [blue]{filename}[/blue]\n" + file_batch.status)
-
-    return True
+    return file_batch
 # End file_upload()  
 
 
@@ -329,8 +328,8 @@ def main():
                 if resp.lower() in ("y", "yes", ""):
                     filename = homedir + fname
                     try:
-                        file_upload(client, vector_store, filename)
-                        print(f"Uploaded: [blue]{filename}[/blue]\n" + file_batch.status)
+                        batch = file_upload(client, vector_store, filename)
+                        print(f"Uploaded: [blue]{filename}[/blue]\n" + batch.status)
                         # Update Assistant object 
                         assistant = client.beta.assistants.update(
                               assistant_id=assistant.id,
@@ -395,6 +394,7 @@ def main():
         # End try 
     # End While  
 
+    lf.flush()
     lf.close()
     print()
 # End main()  
