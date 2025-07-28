@@ -1,9 +1,10 @@
 #!/usr/bin/env python3 
 """
+openai-assistant
 Copyright 2024, 2025 J Adams jfa63[at]duck[dot]com
 Released under the 2-Clause BSD license.
 """
-__version__ = 'v1.0.5'
+__version__ = 'v1.0.6'
 __author__ = 'J. Adams jfa63[at]duck[dot]com'
 
 # Builtin imports 
@@ -53,9 +54,10 @@ REQUIRED  = ("MODEL", "TEMP", "YOUR_NAME", "ASSISTANT_NAME", "OPENAI_API_KEY")
 DEFAULTS  = {"MODEL": "gpt-4.1", "TEMP": 0.3, "YOUR_NAME": "User", "ASSISTANT_NAME": "OpenAI"}
 OPTIONAL  = ("FURTHER_INSTRUCTIONS", "VECTOR_STORE_ID", "ASSISTANT_ID")
 
-
 # Turn off DepricationWarnings 
+# We know Assistans API is to be depricated
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+
 
 
 ## Helper functions 
@@ -101,7 +103,6 @@ def _(event):
 
 
 # Upload file 
-# Upload and then trim the vector store so only the latest log file remains
 def file_upload(client, vector_store, filename: str) -> VectorStoreFileBatch:
     # Skip if the file is empty or missing
     if not os.path.isfile(filename) or os.path.getsize(filename) == 0:
@@ -118,6 +119,8 @@ def file_upload(client, vector_store, filename: str) -> VectorStoreFileBatch:
 
     for fs in file_streams:
         fs.close()
+
+    #print(f"Uploaded: [blue]{filename}[/blue]\n" + file_batch.status)
 
     return file_batch
 # End file_upload()  
@@ -306,11 +309,16 @@ def main():
     print('[b blue]Enter "Done" or "done" to quit session\n[/]')
     console.rule(f"[#f5d676]{tstamp}[/]", style='white')
     print(f'[#f5d676]\nHow can I help you {your_name}?\n[/]')
+
     while True:
         # Take user input. 
         try:
             # Get user input with custom key bindings
             query = session.prompt('>> ', key_bindings=kb)
+            # Display user query in Markdown format using rich
+            query_md = Markdown(query)
+            print("\n[blue b]Me:[/]")
+            console.print(query_md)
         except (EOFError, KeyboardInterrupt):
             break
 
@@ -375,9 +383,9 @@ def main():
                 ) as stream:
                         with console.status("[#f5d676]Thinking[/]", spinner='simpleDots'):
                             stream.until_done()
-                        md = Markdown(stream.text)
-                        print(f'\n[#f5d676]{assistant_name}:[/#f5d676]\n')
-                        console.print(md)
+                        resp_md = Markdown(stream.text)
+                        print(f'\n[#f5d676 b]{assistant_name}:[/]')
+                        console.print(resp_md)
                         lf.write("\n")
                         print("\n")
 
