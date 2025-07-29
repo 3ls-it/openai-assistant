@@ -1,11 +1,8 @@
-## OpenAI Assistant CLI Client  
+## OpenAI Assistant Terminal Client  
   
 ### About  
   
-  This is a terminal-based OpenAI Assistant client. I put this together
-for personal use as I do most of my work in the shell. This is not
-meant to take the place of OpenAI's Codex CLI tool, but is meant to
-be a general-purpose AI assistant.  
+  This is a terminal-based OpenAI Assistant client, which of v2.0.0-beta uses the Textual UI. I put this together for personal use as I do most of my work in the shell. This is not meant to take the place of OpenAI's Codex CLI tool, but is meant to be a general-purpose AI assistant.  
   
   It was developed and is used on Unix-like systems with no
 consideration for that Other OS, though it should work on
@@ -56,9 +53,9 @@ J Adams jfa63[at]duck[dot]com May 2025
   • Uses the OpenAI Assistants API to maintain conversational state  
   • Pluggable tools: built-in `code_interpreter` and `file_search`
 
-- **Rich, Interactive CLI**  
-  • Multi-line editing powered by `prompt_toolkit` (submit with Tab+Enter)  
-  • Pretty Markdown rendering via `rich`  
+- **Textual, Interactive TUI**  
+  • Multi-line editing with support for Markdown (submit with ctrl+backslash)  
+  • Pretty Markdown rendering via `textual` and `rich`  
   • Real-time streaming of responses with full event handling
 
 - **Robust Error Handling & Debugging**  
@@ -66,7 +63,7 @@ J Adams jfa63[at]duck[dot]com May 2025
   • Full tracebacks on unexpected exceptions for easy troubleshooting
 
 - **Lightweight & Self-Contained**  
-  • Single executable script (no additional files to copy)  
+  • Single executable Python file, (no additional files to copy)  
   • Minimal dependencies, all pinned via `requirements.txt`  
   
   
@@ -94,9 +91,9 @@ J Adams jfa63[at]duck[dot]com May 2025
 
 3. Chat  
    – Multi-line input is supported (press Enter for a new line).  
-   – Submit your message with **Tab+Enter**.  
-   – Responses stream in real-time, rendered as Markdown in your terminal.  
-   – Quit session with **Done** or **done**.
+   – Submit your message with **ctrl+backslash**.  
+   – Responses stream in real-time, rendered as Markdown in the TUI.  
+   – Quit session with **ctrl+q**
 
 4. Configuration  
    Edit `~/.openai/settings.py` directly to tweak:
