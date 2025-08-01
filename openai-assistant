@@ -4,7 +4,7 @@ openai-assistant v2
 Copyright 2025 J Adams jfa63[at]duck[dot]com
 Released under the 2-Clause BSD license.
 """
-__version__ = 'v2.0.0'
+__version__ = 'v2.0.1'
 __author__ = 'J. Adams jfa63[at]duck[dot]com'
 
 # Builtin imports
@@ -181,7 +181,8 @@ class EventHandler(AssistantEventHandler):
     def on_tool_call_created(self, tool_call):
         lf.write(f'\n> {tool_call.type}\n')
         
-
+    # For now we just write the input, output and logs to
+    # ~/.openai/chat_log.txt
     def on_tool_call_delta(self, delta, snapshot):
         if delta.type == 'code_interpreter':
             if delta.code_interpreter.input:
@@ -196,7 +197,7 @@ class EventHandler(AssistantEventHandler):
 
 class Openai_API():
     """
-    Encapsulates an OpenAI instance.
+    Encapsulates an OpenAI client instance.
     """
     # Turn off DepricationWarnings
     # We know Assistans API is to be depricated in 2026 
@@ -222,7 +223,18 @@ class Openai_API():
         """
         # Skip if the file is empty or missing
         if not os.path.isfile(filename) or os.path.getsize(filename) == 0:
-            return None
+            # Return a 'fake' VectorStoreFileBatch 
+            return VectorStoreFileBatch(id="",
+                                        created_at=0,
+                                        file_counts={'cancelled': 1,
+                                                     'completed': 0,
+                                                     'failed': 0,
+                                                     'in_progress': 0,
+                                                     'total': 0
+                                                    },
+                                        object="vector_store.files_batch",
+                                        vector_store_id="",
+                                        status="cancelled")
 
         file_paths = [filename]
         file_streams = [open(path, "rb") for path in file_paths]
@@ -304,8 +316,8 @@ class Openai_API():
 
     def send_query(self, query: str) -> str:
         """
-        Creates a query message, submits to the API, then streams response
-        then return resp as a string.
+        Creates a query message, submits to the API, streams response
+        then returns resp as a string.
         """
         resp = ''
         try:
@@ -360,6 +372,7 @@ class OpenaiAssistant(App):
     TITLE = "Openai Assistant"
     SUB_TITLE = f"{__version__}"
     AUTO_FOCUS = "Input_TextArea"
+
     # Style sheets for widgets 
     CSS = """
     DisplayPrompt {
@@ -423,6 +436,8 @@ class OpenaiAssistant(App):
     @on(events.Key)
     async def on_key(self, event: events.Key) -> None:
         """
+        The keystroke clrl+backslash submits user input to the API,
+        then displays returned result.
         """
         if event.key == "ctrl+backslash":
             text = self.input_area._on_submit()
@@ -466,21 +481,22 @@ if __name__ == "__main__":
     CONFIG_PATH = CONFIG_DIR / "settings.py"
     logfile = homedir + ".openai/chat_log.txt"
 
-    # Open log file in append mode
-    lf = open(logfile, 'a', encoding='utf-8')
-    # Write timestamp to log file for session date
-    lf.write(f"\nSession time stamp: {tstamp}\n")
-
     # Get and load  settings, prompt for missing settings
     settings = load_settings()
     config_app()
+
+    # Open log file in append mode
+    lf = open(logfile, 'a', encoding='utf-8')
 
     # Initialise OpenAI client
     api = Openai_API(settings)
 
     # Set up configuration and upload chat_log.txt
     upload = api.setup()  # All CLI prompts and setup happen here
-    if upload.status.strip() == "completed":
+    status = upload.status.strip()
+    if status == "cancelled":
+        print("Not uploading empty chat log.")
+    elif status == "completed":
         print(f"Uploaded [#d5d676]{logfile}[/]\n")
     else:
         print(f"Upload of [red]{logfile}[/] failed!\n")
@@ -489,6 +505,8 @@ if __name__ == "__main__":
 
     # Now launch the TUI, passing the API and settings objects
     app = OpenaiAssistant(api, settings)
-    app.run()
 
-    os.system('clear')
+    # Write timestamp to log file for session date
+    lf.write(f"\nSession time stamp: {tstamp}\n")
+
+    app.run()
