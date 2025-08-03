@@ -4,6 +4,8 @@
   
   This is a terminal-based OpenAI Assistant client, which of v2.0.0-beta uses the Textual UI. I put this together for personal use as I do most of my work in the shell. This is not meant to take the place of OpenAI's Codex CLI tool, but is meant to be a general-purpose AI assistant.  
   
+<img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-03.png" alt="Screenshot 3" resize="400">
+   
   It was developed and is used on Unix-like systems with no
 consideration for that Other OS, though it should work on
 any Unix-like platform.  
@@ -88,9 +90,11 @@ J Adams jfa63[at]duck[dot]com May 2025
    – Enter your `OPENAI_API_KEY` when prompted.  
    – Defaults for `MODEL` (gpt-4.1) and `TEMP` (0.3) are applied automatically.  
    – You’ll be offered to save newly created `ASSISTANT_ID` and `VECTOR_STORE_ID` back into your settings file.
-
-   <img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-01.png" alt="Screenshot 1" resize="400">
-
+  
+   <img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-01.png" alt="Screenshot 1" resize="400">  
+  
+   <img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-01.png" alt="Screenshot 1" resize="400">  
+  
 3. Chat  
    – Multi-line input is supported (press Enter for a new line).  
    – Submit your message with **ctrl+backslash**.  
