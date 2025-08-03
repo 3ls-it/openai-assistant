@@ -4,7 +4,7 @@ openai-assistant v2
 Copyright 2025 J Adams jfa63[at]duck[dot]com
 Released under the 2-Clause BSD license.
 """
-__version__ = 'v2.0.1'
+__version__ = 'v2.0.2'
 __author__ = 'J. Adams jfa63[at]duck[dot]com'
 
 # Builtin imports
@@ -168,9 +168,9 @@ class EventHandler(AssistantEventHandler):
         # Accumulate streamed text 
         self.text = ''
 
-    @override
-    def on_text_created(self, text) -> None:
-        pass
+    #@override
+    #def on_text_created(self, text) -> None:
+    #    pass
 
     @override
     def on_text_delta(self, delta, snapshot):
@@ -179,19 +179,26 @@ class EventHandler(AssistantEventHandler):
         self.text += resp
 
     def on_tool_call_created(self, tool_call):
-        lf.write(f'\n> {tool_call.type}\n')
+        try:
+            if lf:
+                lf.write(f'\n> {tool_call.type}\n')
+        except Exception as e:
+            print(f"[red]Log write error in on_tool_call_created():[/] {e}")
         
     # For now we just write the input, output and logs to
     # ~/.openai/chat_log.txt
     def on_tool_call_delta(self, delta, snapshot):
-        if delta.type == 'code_interpreter':
-            if delta.code_interpreter.input:
-                lf.write(delta.code_interpreter.input)
-            if delta.code_interpreter.outputs:
-                lf.write('\n\nOutput >')
-                for output in delta.code_interpreter.outputs:
-                    if output.type == 'logs':
-                        lf.write(f'\n{output.logs}')
+        try:
+            if delta.type == 'code_interpreter':
+                if delta.code_interpreter.input and lf:
+                    lf.write(delta.code_interpreter.input)
+                if delta.code_interpreter.outputs and lf:
+                    lf.write('\n\nOutput >')
+                    for output in delta.code_interpreter.outputs:
+                        if output.type == 'logs':
+                            lf.write(f'\n{output.logs}')
+        except Exception as e:
+            print(f"[red]Log write error in on_tool_call_delta():[/] {e}")
 # End Class EventHandler
 
 
@@ -323,33 +330,46 @@ class Openai_API():
         try:
             ## Create a message from the user query.
             self.client.beta.threads.messages.create(
-                    thread_id=self.thread.id,
-                    role="user",
-                    content=query
+                thread_id=self.thread.id,
+                role="user",
+                content=query
             )
 
             ## Then, we use the `stream` SDK helper
             # with the `EventHandler` class to create the Run
             # and stream the response.
             with self.client.beta.threads.runs.stream(
-                    thread_id=self.thread.id,
-                    assistant_id=self.assistant.id,
-                    event_handler=EventHandler(),
-                ) as stream:
-                        stream.until_done()
-                        resp = stream.text
+                thread_id=self.thread.id,
+                assistant_id=self.assistant.id,
+                event_handler=EventHandler(),
+            ) as stream:
+                stream.until_done()
+                resp = stream.text
 
         except openai.APIConnectionError as e:
-            lf.write(str(e))  # an underlying Exception, likely raised within httpx.
+            try:
+                if lf:
+                    lf.write(str(e))  # an underlying Exception, likely raised within httpx.
+            except Exception as logex:
+                print(f"[red]Error writing APIConnectionError to log: {logex}")
             return "The server could not be reached. Check log."
+
         except openai.RateLimitError as e:
-            lf.write(str(e))
+            try:
+                if lf:
+                    lf.write(str(e))
+            except Exception as logex:
+                print(f"[red]Error writing RateLimitError to log: {logex}")
             return "A 429 status code was received; we should back off a bit."
+
         except openai.APIStatusError as e:
-            lf.write(str(e.status_code))
-            lf.write(str(e.response))
+            try:
+                if lf:
+                    lf.write(str(e.status_code))
+                    lf.write(str(e.response))
+            except Exception as logex:
+                print(f"[red]Error writing APIStatusError to log: {logex}")
             return "A non-200-range status code was received. Check log."
-        # End try
         return resp
     # End send_query() 
 # End Class Openai_API 
@@ -443,21 +463,26 @@ class OpenaiAssistant(App):
             text = self.input_area._on_submit()
             if not text:
                 return
-
-            lf.write("\nMe:\n"+text+"\n\n")
+            try:
+                if lf:
+                    lf.write("\nMe:\n"+text+"\n\n")
+            except Exception as e:
+                print(f"[red]Error writing user input to log: {e}")
             self.input_area.load_text("Thinking...")
             await self.chat_view.mount(
-                    DisplayPrompt(text,
-                                  border_title=self.your_name))
-
+                DisplayPrompt(text,
+                              border_title=self.your_name))
             resp = await asyncio.to_thread(self.api.send_query, text)
-            lf.write("\n"+self.assistant_name+":\n"+resp+"\n\n")
-
+            try:
+                if lf:
+                    lf.write("\n"+self.assistant_name+":\n"+resp+"\n\n")
+                    lf.flush()
+            except Exception as e:
+                print(f"[red]Error writing AI response to log: {e}")
             await self.chat_view.mount(
-                    DisplayResponse(resp,
-                                    border_title=self.assistant_name))
+                DisplayResponse(resp,
+                                border_title=self.assistant_name))
             self.input_area.clear()
-            lf.flush()
     # End on_key() 
 # End Class OpenaiAssistant
 
@@ -481,32 +506,36 @@ if __name__ == "__main__":
     CONFIG_PATH = CONFIG_DIR / "settings.py"
     logfile = homedir + ".openai/chat_log.txt"
 
-    # Get and load  settings, prompt for missing settings
-    settings = load_settings()
-    config_app()
+    try:
+        # Get and load  settings, prompt for missing settings
+        settings = load_settings()
+        config_app()
 
-    # Open log file in append mode
-    lf = open(logfile, 'a', encoding='utf-8')
+        # Open log file in append mode
+        lf = open(logfile, 'a', encoding='utf-8')
 
-    # Initialise OpenAI client
-    api = Openai_API(settings)
+        # Initialise OpenAI client
+        api = Openai_API(settings)
 
-    # Set up configuration and upload chat_log.txt
-    upload = api.setup()  # All CLI prompts and setup happen here
-    status = upload.status.strip()
-    if status == "cancelled":
-        print("Not uploading empty chat log.")
-    elif status == "completed":
-        print(f"Uploaded [#d5d676]{logfile}[/]\n")
-    else:
-        print(f"Upload of [red]{logfile}[/] failed!\n")
-    # a little time to read msg
-    sleep(3)
+        # Set up configuration and upload chat_log.txt
+        upload = api.setup()  # All CLI prompts and setup happen here
+        status = upload.status.strip()
+        if status == "cancelled":
+            print("Not uploading empty chat log.")
+        elif status == "completed":
+            print(f"Uploaded [#d5d676]{logfile}[/]\n")
+        else:
+            print(f"Upload of [red]{logfile}[/] failed!\n")
+        # a little time to read msg
+        sleep(3)
 
-    # Now launch the TUI, passing the API and settings objects
-    app = OpenaiAssistant(api, settings)
+        # Now launch the TUI, passing the API and settings objects
+        app = OpenaiAssistant(api, settings)
 
-    # Write timestamp to log file for session date
-    lf.write(f"\nSession time stamp: {tstamp}\n")
+        # Write timestamp to log file for session date
+        lf.write(f"\nSession time stamp: {tstamp}\n")
 
-    app.run()
+        app.run()
+        lf.close()
+    except Exception as e:
+        print(f"[red]Caught:[/] {e}")
