@@ -33,7 +33,7 @@ to use the Responses API.
 this API, not all do. See:  
 https://platform.openai.com/docs/models  
   
-J Adams jfa63[at]duck[dot]com May 2025   
+J Adams jfa63[at]duck[dot]com Aug 2025   
   
   
 ### Features  
@@ -56,10 +56,13 @@ J Adams jfa63[at]duck[dot]com May 2025
   • Pluggable tools: built-in `code_interpreter` and `file_search`
 
 - **Textual, Interactive TUI**  
-  • Multi-line editing with support for Markdown (submit with ctrl+backslash)  
+  • Multi-line editing with support for Markdown (submit with **ctrl+backslash**)  
   • Pretty Markdown rendering via `textual` and `rich`  
-  • Real-time streaming of responses with full event handling
-
+  • Real-time streaming of responses with event handling
+  • Textual provides built-in key-bindings and themes:
+  
+<img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-07.png" alt="Screenshot 7" resize="400">  
+  
 - **Robust Error Handling & Debugging**  
   • Skips empty-file uploads to avoid “File is empty” errors  
   • Full tracebacks on unexpected exceptions for easy troubleshooting
@@ -91,16 +94,22 @@ J Adams jfa63[at]duck[dot]com May 2025
    – Defaults for `MODEL` (gpt-4.1) and `TEMP` (0.3) are applied automatically.  
    – You’ll be offered to save newly created `ASSISTANT_ID` and `VECTOR_STORE_ID` back into your settings file.
   
-   <img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-01.png" alt="Screenshot 1" resize="400">  
+<img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-01.png" alt="Screenshot 1" resize="400">  
   
-   <img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-01.png" alt="Screenshot 1" resize="400">  
+<img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-02.png" alt="Screenshot 2" resize="400">  
   
 3. Chat  
    – Multi-line input is supported (press Enter for a new line).  
    – Submit your message with **ctrl+backslash**.  
-   – Responses stream in real-time, rendered as Markdown in the TUI.  
+   – Responses are rendered as Markdown in the TUI.  
    – Quit session with **ctrl+q**
-
+  
+<img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-04.png" alt="Screenshot 4" resize="400">  
+    
+<img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-05.png" alt="Screenshot 5" resize="400">  
+  
+<img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-06.png" alt="Screenshot 6" resize="400">  
+  
 4. Configuration  
    Edit `~/.openai/settings.py` directly to tweak:
    - `MODEL` (e.g. gpt-3.5-turbo, gpt-4)  
