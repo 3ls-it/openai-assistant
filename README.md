@@ -45,7 +45,7 @@ J Adams jfa63[at]duck[dot]com Aug 2025
 
 - **Persistent Settings & IDs**  
   • In-situ prompts to save new `ASSISTANT_ID` and `VECTOR_STORE_ID` back to your settings file  
-  • One-time setup—you won’t recreate assistants or stores unless you choose to
+  • One-time setup — you won’t recreate assistants or stores unless you choose to
 
 - **Chat History with Memory**  
   • Logs every conversation to `~/.openai/chat_log.txt`  
@@ -99,9 +99,9 @@ J Adams jfa63[at]duck[dot]com Aug 2025
 <img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-02.png" alt="Screenshot 2" resize="400">  
   
 3. Chat  
-   – Multi-line input is supported (press Enter for a new line).  
+   – Multi-line input is supported (press **Enter** for a new line).  
    – Submit your message with **ctrl+backslash**.  
-   – Responses are rendered as Markdown in the TUI.  
+   – User input and responses are rendered as Markdown in the TUI.  
    – Quit session with **ctrl+q**
   
 <img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-04.png" alt="Screenshot 4" resize="400">  
