@@ -4,7 +4,7 @@ openai-assistant v2
 Copyright 2025 J Adams jfa63[at]duck[dot]com
 Released under the 2-Clause BSD license.
 """
-__version__ = 'v2.0.2'
+__version__ = 'v2.0.3'
 __author__ = 'J. Adams jfa63[at]duck[dot]com'
 
 # Builtin imports
@@ -25,7 +25,7 @@ from openai.types.vector_stores.vector_store_file_batch import VectorStoreFileBa
 # Importing overide for EventHandler
 from typing_extensions import override
 
-# Rich imports for output formatting
+# Rich imports for text output formatting
 from rich import print
 
 # Textual imports
