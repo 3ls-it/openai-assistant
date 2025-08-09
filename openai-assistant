@@ -4,7 +4,7 @@ openai-assistant v2
 Copyright 2025 J Adams jfa63[at]duck[dot]com
 Released under the 2-Clause BSD license.
 """
-__version__ = 'v2.0.3'
+__version__ = 'v2.0.4'
 __author__ = 'J. Adams jfa63[at]duck[dot]com'
 
 # Builtin imports
@@ -228,33 +228,98 @@ class Openai_API():
         """
         Uploads a file.
         """
-        # Skip if the file is empty or missing
         if not os.path.isfile(filename) or os.path.getsize(filename) == 0:
-            # Return a 'fake' VectorStoreFileBatch 
             return VectorStoreFileBatch(id="",
                                         created_at=0,
                                         file_counts={'cancelled': 1,
                                                      'completed': 0,
                                                      'failed': 0,
                                                      'in_progress': 0,
-                                                     'total': 0
-                                                    },
+                                                     'total': 0},
                                         object="vector_store.files_batch",
                                         vector_store_id="",
                                         status="cancelled")
 
         file_paths = [filename]
-        file_streams = [open(path, "rb") for path in file_paths]
-
-        # Upload files to the vector store
-        file_batch = self.client.vector_stores.file_batches.upload_and_poll(
-            vector_store_id=self.vector_store.id, files=file_streams
-        )
-
-        for fs in file_streams:
-            fs.close()
-
-        return file_batch
+        file_streams = []
+        try:
+            for path in file_paths:
+                file_streams.append(open(path, "rb"))
+            file_batch = self.client.vector_stores.file_batches.upload_and_poll(
+                vector_store_id=self.vector_store.id, files=file_streams
+            )
+            return file_batch
+        except openai.APIConnectionError as e:
+            try:
+                if lf:
+                    lf.write(str(e))
+            except Exception:
+                pass
+            return VectorStoreFileBatch(id="",
+                                        created_at=0,
+                                        file_counts={'cancelled': 0,
+                                                     'completed': 0,
+                                                     'failed': 1,
+                                                     'in_progress': 0,
+                                                     'total': 0},
+                                        object="vector_store.files_batch",
+                                        vector_store_id="",
+                                        status="failed")
+        except openai.RateLimitError as e:
+            try:
+                if lf:
+                    lf.write(str(e))
+            except Exception:
+                pass
+            return VectorStoreFileBatch(id="",
+                                        created_at=0,
+                                        file_counts={'cancelled': 0,
+                                                     'completed': 0,
+                                                     'failed': 1,
+                                                     'in_progress': 0,
+                                                     'total': 0},
+                                        object="vector_store.files_batch",
+                                        vector_store_id="",
+                                        status="failed")
+        except openai.APIStatusError as e:
+            try:
+                if lf:
+                    lf.write(str(e.status_code))
+                    lf.write(str(e.response))
+            except Exception:
+                pass
+            return VectorStoreFileBatch(id="",
+                                        created_at=0,
+                                        file_counts={'cancelled': 0,
+                                                     'completed': 0,
+                                                     'failed': 1,
+                                                     'in_progress': 0,
+                                                     'total': 0},
+                                        object="vector_store.files_batch",
+                                        vector_store_id="",
+                                        status="failed")
+        except Exception as e:
+            try:
+                if lf:
+                    lf.write(str(e))
+            except Exception:
+                pass
+            return VectorStoreFileBatch(id="",
+                                        created_at=0,
+                                        file_counts={'cancelled': 0,
+                                                     'completed': 0,
+                                                     'failed': 1,
+                                                     'in_progress': 0,
+                                                     'total': 0},
+                                        object="vector_store.files_batch",
+                                        vector_store_id="",
+                                        status="failed")
+        finally:
+            for fs in file_streams:
+                try:
+                    fs.close()
+                except Exception:
+                    pass
     # End file_upload()
 
 
@@ -263,10 +328,12 @@ class Openai_API():
         Creates Assistant instance and Vector Store.
         """
         ## Assistant setup
-        # Default baseline instructions 
-        # Further, custom instructions can be added in
-        # ~/.openai/settings.py
+        # Compose baseline instructions and append any user-provided
+        # additional guidance from settings (FURTHER_INSTRUCTIONS).
         instructions = f"You are {self.assistant_name}, {self.your_name}'s personal AI assistant."
+        further = (self.config.get("FURTHER_INSTRUCTIONS") or "").strip()
+        if further:
+            instructions = f"{instructions}\n\n{further}"
 
         if self.config.get("ASSISTANT_ID"):
          self.assistant = self.client.beta.assistants.retrieve(
@@ -309,11 +376,32 @@ class Openai_API():
         ## Upload chat_log.txt
         upload = self.file_upload(logfile)
 
-        ## Update assistant with vector store
-        self.assistant = self.client.beta.assistants.update(
-         assistant_id=self.assistant.id,
-         tool_resources={"file_search": {"vector_store_ids": [self.vector_store.id]}},
-        )
+        ## Update assistant with vector store and ensure instructions are in-sync
+        update_kwargs = {
+            "assistant_id": self.assistant.id,
+            "tool_resources": {"file_search": {"vector_store_ids": [self.vector_store.id]}},
+        }
+        updated_instructions = False
+        try:
+            if (self.assistant.instructions or "") != instructions:
+                update_kwargs["instructions"] = instructions
+                updated_instructions = True
+        except Exception:
+            update_kwargs["instructions"] = instructions
+            updated_instructions = True
+
+        try:
+            self.assistant = self.client.beta.assistants.update(**update_kwargs)
+        except Exception as e:
+            try:
+                if lf:
+                    lf.write(str(e))
+            except Exception:
+                pass
+            print("[red]Warning:[/] Failed to update assistant tool resources/instructions; proceeding without vector store update.")
+        else:
+            if updated_instructions:
+                print("Synced assistant instructions with settings: [#f5d676]YOUR_NAME[/] and [#f5d676]FURTHER_INSTRUCTIONS[/].")
 
         ## Create thread
         self.thread = self.client.beta.threads.create()
@@ -368,8 +456,15 @@ class Openai_API():
                     lf.write(str(e.status_code))
                     lf.write(str(e.response))
             except Exception as logex:
-                print(f"[red]Error writing APIStatusError to log: {logex}")
-            return "A non-200-range status code was received. Check log."
+                print(f'[red]Error writing APIStatusError to log: {logex}')
+            return 'A non-200-range status code was received. Check log.'
+        except Exception as e:
+            try:
+                if lf:
+                    lf.write(str(e))
+            except Exception as logex:
+                print(f'[red]Error writing unexpected exception to log: {logex}')
+            return 'An unexpected error occurred while streaming. Check log.'
         return resp
     # End send_query() 
 # End Class Openai_API 
@@ -524,7 +619,7 @@ if __name__ == "__main__":
             print("Not uploading empty chat log.")
         elif status == "completed":
             print(f"Uploaded [#d5d676]{logfile}[/]\n")
-        else:
+        elif status == "failed":
             print(f"Upload of [red]{logfile}[/] failed!\n")
         # a little time to read msg
         sleep(3)
