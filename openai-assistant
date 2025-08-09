@@ -4,10 +4,11 @@ openai-assistant v2
 Copyright 2025 J Adams jfa63[at]duck[dot]com
 Released under the 2-Clause BSD license.
 """
-__version__ = 'v2.0.4'
+__version__ = 'v2.1.0'
 __author__ = 'J. Adams jfa63[at]duck[dot]com'
 
 # Builtin imports
+import argparse
 import asyncio
 from datetime import datetime
 import os
@@ -15,6 +16,9 @@ from pathlib import Path
 import runpy
 from time import sleep
 import warnings
+import logging
+from logging.handlers import TimedRotatingFileHandler
+import time
 
 # OpenAI imports
 import openai
@@ -210,7 +214,7 @@ class Openai_API():
     # We know Assistans API is to be depricated in 2026 
     warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-    def __init__(self, config):
+    def __init__(self, config, logger=None):
         self.config = config
         self.api_key = self.config["OPENAI_API_KEY"]
         self.assistant_name = self.config["ASSISTANT_NAME"]
@@ -219,6 +223,7 @@ class Openai_API():
         self.temp = self.config["TEMP"]
         self.client = OpenAI(api_key=self.api_key)
         self.assistant = None
+        self.logger = logger or logging.getLogger("openai_assistant.api")
         self.vector_store = None
         self.thread = None
 
@@ -229,6 +234,10 @@ class Openai_API():
         Uploads a file.
         """
         if not os.path.isfile(filename) or os.path.getsize(filename) == 0:
+            try:
+                self.logger.info(f"upload skipped: empty or missing file {filename}")
+            except Exception:
+                pass
             return VectorStoreFileBatch(id="",
                                         created_at=0,
                                         file_counts={'cancelled': 1,
@@ -240,19 +249,24 @@ class Openai_API():
                                         vector_store_id="",
                                         status="cancelled")
 
-        file_paths = [filename]
         file_streams = []
         try:
-            for path in file_paths:
-                file_streams.append(open(path, "rb"))
+            file_streams.append(open(filename, "rb"))
+            try:
+                self.logger.debug(f"uploading 1 file to vector_store_id={self.vector_store.id}")
+            except Exception:
+                pass
             file_batch = self.client.vector_stores.file_batches.upload_and_poll(
                 vector_store_id=self.vector_store.id, files=file_streams
             )
+            try:
+                self.logger.info(f"upload status={file_batch.status} file_counts={file_batch.file_counts}")
+            except Exception:
+                pass
             return file_batch
         except openai.APIConnectionError as e:
             try:
-                if lf:
-                    lf.write(str(e))
+                self.logger.error(f"APIConnectionError during upload: {e}")
             except Exception:
                 pass
             return VectorStoreFileBatch(id="",
@@ -267,8 +281,7 @@ class Openai_API():
                                         status="failed")
         except openai.RateLimitError as e:
             try:
-                if lf:
-                    lf.write(str(e))
+                self.logger.error(f"RateLimitError during upload: {e}")
             except Exception:
                 pass
             return VectorStoreFileBatch(id="",
@@ -283,9 +296,7 @@ class Openai_API():
                                         status="failed")
         except openai.APIStatusError as e:
             try:
-                if lf:
-                    lf.write(str(e.status_code))
-                    lf.write(str(e.response))
+                self.logger.error(f"APIStatusError during upload: {e}")
             except Exception:
                 pass
             return VectorStoreFileBatch(id="",
@@ -300,8 +311,7 @@ class Openai_API():
                                         status="failed")
         except Exception as e:
             try:
-                if lf:
-                    lf.write(str(e))
+                self.logger.error(f"Unexpected error during upload: {e}")
             except Exception:
                 pass
             return VectorStoreFileBatch(id="",
@@ -323,7 +333,7 @@ class Openai_API():
     # End file_upload()
 
 
-    def setup(self) -> VectorStoreFileBatch:
+    def setup(self, upload_log: bool = True) -> VectorStoreFileBatch:
         """
         Creates Assistant instance and Vector Store.
         """
@@ -339,6 +349,10 @@ class Openai_API():
          self.assistant = self.client.beta.assistants.retrieve(
              assistant_id=self.config["ASSISTANT_ID"]
          )
+         try:
+             self.logger.info(f"assistant retrieved id={self.assistant.id} model={self.gpt_model}")
+         except Exception:
+             pass
         else:
          # Prompt for assistant creation
          print("No ASSISTANT_ID found. Creating new assistant...")
@@ -350,6 +364,10 @@ class Openai_API():
              temperature=self.temp
          )
          print(f"Created new assistant with ID {self.assistant.id}")
+         try:
+             self.logger.info(f"assistant created id={self.assistant.id} model={self.gpt_model}")
+         except Exception:
+             pass
          resp = input("Save ASSISTANT_ID to config? [Y/n] ").strip().lower()
          if resp in ("", "y", "yes"):
              write_setting("ASSISTANT_ID", self.assistant.id)
@@ -362,10 +380,18 @@ class Openai_API():
          self.vector_store = self.client.vector_stores.retrieve(
              vector_store_id=self.config["VECTOR_STORE_ID"]
          )
+         try:
+             self.logger.info(f"vector_store retrieved id={self.vector_store.id}")
+         except Exception:
+             pass
         else:
          print("No VECTOR_STORE_ID found. Creating new vector store...")
          self.vector_store = self.client.vector_stores.create(name="Chat History")
          print(f"Created new vector store with ID {self.vector_store.id}")
+         try:
+             self.logger.info(f"vector_store created id={self.vector_store.id}")
+         except Exception:
+             pass
          resp = input("Save VECTOR_STORE_ID to config? [Y/n] ").strip().lower()
          if resp in ("", "y", "yes"):
              write_setting("VECTOR_STORE_ID", self.vector_store.id)
@@ -373,8 +399,24 @@ class Openai_API():
          else:
              print("VECTOR_STORE_ID not saved; will create new next run.")
 
-        ## Upload chat_log.txt
-        upload = self.file_upload(logfile)
+        ## Upload chat_log.txt (optional)
+        if upload_log:
+            upload = self.file_upload(logfile)
+        else:
+            upload = VectorStoreFileBatch(
+                id="",
+                created_at=0,
+                file_counts={
+                    "cancelled": 1,
+                    "completed": 0,
+                    "failed": 0,
+                    "in_progress": 0,
+                    "total": 0,
+                },
+                object="vector_store.files_batch",
+                vector_store_id=self.vector_store.id if self.vector_store else "",
+                status="cancelled",
+            )
 
         ## Update assistant with vector store and ensure instructions are in-sync
         update_kwargs = {
@@ -394,6 +436,10 @@ class Openai_API():
             self.assistant = self.client.beta.assistants.update(**update_kwargs)
         except Exception as e:
             try:
+                self.logger.warning(f"failed to update assistant resources/instructions: {e}")
+            except Exception:
+                pass
+            try:
                 if lf:
                     lf.write(str(e))
             except Exception:
@@ -402,9 +448,17 @@ class Openai_API():
         else:
             if updated_instructions:
                 print("Synced assistant instructions with settings: [#f5d676]YOUR_NAME[/] and [#f5d676]FURTHER_INSTRUCTIONS[/].")
+                try:
+                    self.logger.info("assistant instructions synced with settings")
+                except Exception:
+                    pass
 
         ## Create thread
         self.thread = self.client.beta.threads.create()
+        try:
+            self.logger.info(f"thread created id={self.thread.id}")
+        except Exception:
+            pass
         return upload
     # End setup() 
 
@@ -426,6 +480,11 @@ class Openai_API():
             ## Then, we use the `stream` SDK helper
             # with the `EventHandler` class to create the Run
             # and stream the response.
+            try:
+                self.logger.info("run started")
+                start = time.time()
+            except Exception:
+                pass
             with self.client.beta.threads.runs.stream(
                 thread_id=self.thread.id,
                 assistant_id=self.assistant.id,
@@ -433,37 +492,37 @@ class Openai_API():
             ) as stream:
                 stream.until_done()
                 resp = stream.text
+            try:
+                elapsed = time.time() - start
+                self.logger.info(f"run completed elapsed={elapsed:.2f}s resp_len={len(resp)}")
+            except Exception:
+                pass
 
         except openai.APIConnectionError as e:
             try:
-                if lf:
-                    lf.write(str(e))  # an underlying Exception, likely raised within httpx.
-            except Exception as logex:
-                print(f"[red]Error writing APIConnectionError to log: {logex}")
+                self.logger.error(f"APIConnectionError: {e}")
+            except Exception:
+                pass
             return "The server could not be reached. Check log."
 
         except openai.RateLimitError as e:
             try:
-                if lf:
-                    lf.write(str(e))
-            except Exception as logex:
-                print(f"[red]Error writing RateLimitError to log: {logex}")
+                self.logger.error(f"RateLimitError: {e}")
+            except Exception:
+                pass
             return "A 429 status code was received; we should back off a bit."
 
         except openai.APIStatusError as e:
             try:
-                if lf:
-                    lf.write(str(e.status_code))
-                    lf.write(str(e.response))
-            except Exception as logex:
-                print(f'[red]Error writing APIStatusError to log: {logex}')
+                self.logger.error(f"APIStatusError: {e}")
+            except Exception:
+                pass
             return 'A non-200-range status code was received. Check log.'
         except Exception as e:
             try:
-                if lf:
-                    lf.write(str(e))
-            except Exception as logex:
-                print(f'[red]Error writing unexpected exception to log: {logex}')
+                self.logger.error(f"Unexpected error during run: {e}")
+            except Exception:
+                pass
             return 'An unexpected error occurred while streaming. Check log.'
         return resp
     # End send_query() 
@@ -484,8 +543,8 @@ class OpenaiAssistant(App):
         self.your_name = self.config["YOUR_NAME"]
 
 
-    TITLE = "Openai Assistant"
-    SUB_TITLE = f"{__version__}"
+    TITLE = "OpenAI Assistant"
+    SUB_TITLE = f"{__version__}  •  Submit: Ctrl+\\  •  Quit: Ctrl+Q"
     AUTO_FOCUS = "Input_TextArea"
 
     # Style sheets for widgets 
@@ -538,8 +597,12 @@ class OpenaiAssistant(App):
         """
         Composes UI elements.
         """
-        resp_area = DisplayResponse(f"How can I help you {self.your_name}?",
-                                    border_title=self.assistant_name)
+        resp_area = DisplayResponse(
+            f"Hello {self.your_name}!\n\n"
+            "I’m ready when you are. Type your message below.\n\n"
+            "Hints: Submit with `Ctrl+Backslash`, new line with `Enter`, quit with `Ctrl+Q`.",
+            border_title=self.assistant_name,
+        )
         yield Header(show_clock=True)
         with self.chat_view:
             yield resp_area
@@ -551,7 +614,7 @@ class OpenaiAssistant(App):
     @on(events.Key)
     async def on_key(self, event: events.Key) -> None:
         """
-        The keystroke clrl+backslash submits user input to the API,
+        The keystroke ctrl+backslash submits user input to the API,
         then displays returned result.
         """
         if event.key == "ctrl+backslash":
@@ -586,7 +649,7 @@ class OpenaiAssistant(App):
 if __name__ == "__main__":
     # Clear terminal
     os.system('clear')
-    print(f"\n[#f5d676 b]Openai Assistant {__version__}[/]\n")
+    print(f"\n[#f5d676 b]OpenAI Assistant {__version__}[/]\n")
     print("[green]Initialising settings and backend...[/]\n")
 
     # Get current date and time
@@ -602,21 +665,74 @@ if __name__ == "__main__":
     logfile = homedir + ".openai/chat_log.txt"
 
     try:
+        # CLI flags
+        parser = argparse.ArgumentParser(
+            prog="openai-assistant",
+            description="Terminal client for the OpenAI Assistants API",
+        )
+        parser.add_argument(
+            "--no-upload",
+            action="store_true",
+            help="Do not upload ~/.openai/chat_log.txt on startup",
+        )
+        parser.add_argument(
+            "--reset-assistant",
+            action="store_true",
+            help="Ignore and clear ASSISTANT_ID in settings before startup",
+        )
+        parser.add_argument(
+            "--reset-store",
+            action="store_true",
+            help="Ignore and clear VECTOR_STORE_ID in settings before startup",
+        )
+        parser.add_argument("--debug-api", action="store_true", help="Enable DEBUG level API logging to ~/.openai/api.log")
+        args = parser.parse_args()
         # Get and load  settings, prompt for missing settings
         settings = load_settings()
+        # Apply resets if requested
+        if args.reset_assistant:
+            settings["ASSISTANT_ID"] = ""
+            try:
+                write_setting("ASSISTANT_ID", "")
+                print("Reset ASSISTANT_ID in settings.")
+            except Exception:
+                pass
+        if args.reset_store:
+            settings["VECTOR_STORE_ID"] = ""
+            try:
+                write_setting("VECTOR_STORE_ID", "")
+                print("Reset VECTOR_STORE_ID in settings.")
+            except Exception:
+                pass
         config_app()
+
+        # Configure API logger
+        api_logfile = homedir + ".openai/api.log"
+        api_logger = logging.getLogger("openai_assistant.api")
+        api_logger.setLevel(logging.DEBUG if args.debug_api else logging.INFO)
+        handler = TimedRotatingFileHandler(api_logfile, when="midnight", backupCount=7, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        if not any(getattr(h, "baseFilename", None) == handler.baseFilename for h in api_logger.handlers):
+            api_logger.addHandler(handler)
+        api_logger.info("startup: settings initialised")
+
 
         # Open log file in append mode
         lf = open(logfile, 'a', encoding='utf-8')
 
         # Initialise OpenAI client
-        api = Openai_API(settings)
+        api = Openai_API(settings, logger=api_logger)
+        # Log config summary (no secrets)
+        try:
+            api_logger.info("config: model="+str(settings.get('MODEL'))+" temp="+str(settings.get('TEMP'))+" assistant_id="+("yes" if settings.get('ASSISTANT_ID') else "no")+" vector_store_id="+("yes" if settings.get('VECTOR_STORE_ID') else "no"))
+        except Exception:
+            pass
 
         # Set up configuration and upload chat_log.txt
-        upload = api.setup()  # All CLI prompts and setup happen here
+        upload = api.setup(upload_log=(not args.no_upload))  # All CLI prompts and setup happen here
         status = upload.status.strip()
         if status == "cancelled":
-            print("Not uploading empty chat log.")
+            print("Skipping chat log upload.")
         elif status == "completed":
             print(f"Uploaded [#d5d676]{logfile}[/]\n")
         elif status == "failed":
