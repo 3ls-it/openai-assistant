@@ -2,7 +2,7 @@
   
 ### About  
   
-  This is a terminal-based OpenAI Assistant client, which of v2.0.0-beta uses the Textual UI. I put this together for personal use as I do most of my work in the shell. This is not meant to take the place of OpenAI's Codex CLI tool, but is meant to be a general-purpose AI assistant.  
+  This is a terminal-based OpenAI Assistant client, which as of v2.0.0-beta uses the Textual UI. I put this together for personal use as I do most of my work in the shell. This is not meant to take the place of OpenAI's Codex CLI tool, but is meant to be a general-purpose AI assistant.  
   
 <img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-03.png" alt="Screenshot 3" resize="400">
    
