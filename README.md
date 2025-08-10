@@ -4,7 +4,7 @@
   
   This is a terminal-based OpenAI Assistant client, which as of v2.0.0-beta uses the Textual UI. I put this together for personal use as I do most of my work in the shell. This is not meant to take the place of OpenAI's Codex CLI tool, but is meant to be a general-purpose AI assistant.  
   
-<img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-03.png" alt="Screenshot 3" resize="400">
+<img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-08.png" alt="Screenshot 8, new opening dialogue." resize="400">
    
   It was developed and is used on Unix-like systems with no
 consideration for that Other OS, though it should work on
@@ -54,7 +54,8 @@ J Adams jfa63[at]duck[dot]com Aug 2025
 - **Assistants API Integration**  
   • Uses the OpenAI Assistants API to maintain conversational state  
   • Pluggable tools: built-in `code_interpreter` and `file_search`
-
+  • API logging to `~/.openai/api.log`
+  
 - **Textual, Interactive TUI**  
   • Multi-line editing with support for Markdown (submit with **ctrl+backslash**)  
   • Pretty Markdown rendering via `textual` and `rich`  
@@ -98,6 +99,7 @@ J Adams jfa63[at]duck[dot]com Aug 2025
    - `--no-upload` — skip uploading `~/.openai/chat_log.txt` at startup
    - `--reset-assistant` — ignore and clear `ASSISTANT_ID` in your settings (forces new assistant creation)
    - `--reset-store` — ignore and clear `VECTOR_STORE_ID` in your settings (forces new vector store)
+   - `--debug-api` — enable DEBUG-level API logging for more verbose diagnostics
   
 <img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-01.png" alt="Screenshot 1" resize="400">  
   
@@ -113,15 +115,10 @@ J Adams jfa63[at]duck[dot]com Aug 2025
     
 <img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-05.png" alt="Screenshot 5" resize="400">  
   
-<img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-06.png" alt="Screenshot 6" resize="400">  
   
 4. Configuration  
    Edit `~/.openai/settings.py` directly to tweak:
    - `MODEL` (e.g. gpt-3.5-turbo, gpt-4)  
    - `TEMP` (0.0–2.0)  
    - Optional fields: `YOUR_NAME`, `ASSISTANT_NAME`, `FURTHER_INSTRUCTIONS`.
-
-5. Chat History  
-   – All sessions are logged to `~/.openai/chat_log.txt`.  
-   – On startup, logs are uploaded to an OpenAI Vector Store (for `file_search`).
 

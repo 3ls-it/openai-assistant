@@ -4,7 +4,7 @@ openai-assistant v2
 Copyright 2025 J Adams jfa63[at]duck[dot]com
 Released under the 2-Clause BSD license.
 """
-__version__ = 'v2.1.0'
+__version__ = 'v2.1.1'
 __author__ = 'J. Adams jfa63[at]duck[dot]com'
 
 # Builtin imports
@@ -171,10 +171,6 @@ class EventHandler(AssistantEventHandler):
         super().__init__()
         # Accumulate streamed text 
         self.text = ''
-
-    #@override
-    #def on_text_created(self, text) -> None:
-    #    pass
 
     @override
     def on_text_delta(self, delta, snapshot):
@@ -598,8 +594,7 @@ class OpenaiAssistant(App):
         Composes UI elements.
         """
         resp_area = DisplayResponse(
-            f"Hello {self.your_name}!\n\n"
-            "I’m ready when you are. Type your message below.\n\n"
+            f"Hello {self.your_name}, I’m ready to help! Just type your input below.\n\n"
             "Hints: Submit with `Ctrl+Backslash`, new line with `Enter`, quit with `Ctrl+Q`.",
             border_title=self.assistant_name,
         )
@@ -654,8 +649,8 @@ if __name__ == "__main__":
 
     # Get current date and time
     now = datetime.now()
-    # Format as '9 June 2025 9:52pm'
-    tstamp = now.strftime('%-d %B %Y %-I:%M%p').lower()
+    # Format as e.g. '9 June 2025 9:52pm'
+    tstamp = now.strftime('%-d %B %Y %-I:%M%p')
 
     ## Some global definitions
     # Define home directory and config paths
@@ -685,8 +680,13 @@ if __name__ == "__main__":
             action="store_true",
             help="Ignore and clear VECTOR_STORE_ID in settings before startup",
         )
-        parser.add_argument("--debug-api", action="store_true", help="Enable DEBUG level API logging to ~/.openai/api.log")
+        parser.add_argument(
+            "--debug-api",
+            action="store_true",
+            help="Enable DEBUG level API logging to ~/.openai/api.log",
+        )
         args = parser.parse_args()
+
         # Get and load  settings, prompt for missing settings
         settings = load_settings()
         # Apply resets if requested
@@ -717,12 +717,13 @@ if __name__ == "__main__":
         api_logger.info("startup: settings initialised")
 
 
-        # Open log file in append mode
+        # Open chat log file in append mode
         lf = open(logfile, 'a', encoding='utf-8')
 
         # Initialise OpenAI client
         api = Openai_API(settings, logger=api_logger)
         # Log config summary (no secrets)
+
         try:
             api_logger.info("config: model="+str(settings.get('MODEL'))+" temp="+str(settings.get('TEMP'))+" assistant_id="+("yes" if settings.get('ASSISTANT_ID') else "no")+" vector_store_id="+("yes" if settings.get('VECTOR_STORE_ID') else "no"))
         except Exception:
