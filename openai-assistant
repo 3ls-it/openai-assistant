@@ -1,43 +1,55 @@
-#!/usr/bin/env python3
+#!/data/data/com.termux/files/usr/bin/env python3
 """
 openai-assistant v2
 Copyright 2025 J Adams jfa63[at]duck[dot]com
 Released under the 2-Clause BSD license.
 """
-__version__ = 'v2.1.1'
+__version__ = 'v2.2.0-beta'
 __author__ = 'J. Adams jfa63[at]duck[dot]com'
 
 # Builtin imports
 import argparse
 import asyncio
 from datetime import datetime
+import logging
+from logging.handlers import TimedRotatingFileHandler
 import os
 from pathlib import Path
 import runpy
+import time
 from time import sleep
 import warnings
-import logging
-from logging.handlers import TimedRotatingFileHandler
-import time
 
 # OpenAI imports
 import openai
-from openai import OpenAI
 from openai import AssistantEventHandler
+from openai import OpenAI
 from openai.types.vector_stores.vector_store_file_batch import VectorStoreFileBatch
 
 # Importing overide for EventHandler
 from typing_extensions import override
 
 # Rich imports for text output formatting
+from rich.console import Console
 from rich import print
 
 # Textual imports
 from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import VerticalScroll
-from textual.widgets import Header, Footer, Markdown, TextArea
+from textual.containers import Center, Container, Grid, Middle, VerticalScroll
+from textual.highlight import highlight
+from textual.reactive import reactive, var
+from textual.screen import ModalScreen
+from textual.widgets import (Button,
+                             DirectoryTree,
+                             Footer,
+                             Header,
+                             Label,
+                             Markdown,
+                             ProgressBar,
+                             TextArea,
+                            )
 
 
 
@@ -157,6 +169,136 @@ class DisplayResponse(Markdown):
         super().__init__(text, *args, **kwargs)
         self.border_title = border_title
 # End Class Response
+
+
+# Modal Screen with quit dialogue  
+class QuitDialogue(ModalScreen):
+    """
+    Provides a ModalScreen with a quit dialogue box.
+    Based on example code from the Textual website.
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Grid(
+            Label("Are you sure you want to quit?", id="message"),
+            Button("Quit", variant="warning", compact=True, id="quit"),
+            Button("Cancel", variant="primary", compact=True, id="cancel"),
+            id="quit_dialogue",
+        ) 
+    # End compose() 
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "quit":
+            self.app.exit()
+        else:
+            self.app.pop_screen()
+    # End on_button_pressed() 
+# End Class QuitDialogue
+
+
+# Modal Screen with upload dialogue  
+class UploadDialogue(ModalScreen):
+    """
+    Provides a ModalScreen with the upload confirmation dialogue box.
+    Based on example code from the Textual website.
+    """
+
+    def __init__(self, fname):
+        super().__init__()
+        self.fname = os.path.basename(fname)
+
+    def compose(self) -> ComposeResult:
+        yield Grid(
+            Label(f"Upload {self.fname}?", id="message"),
+            Button("Upload", variant="success", compact=True, id="upload"),
+            Button("Cancel", variant="primary", compact=True, id="cancel"),
+            id="upload_dialogue",
+        ) 
+    # End compose() 
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.dismiss(False)
+        elif event.button.id == "upload":
+            self.dismiss(True)
+    # End on_button_pressed() 
+# End Class UploadDialogue
+
+
+# Modal Screen with upload progress 
+class UploadResult(ModalScreen):
+    """
+    Provides a ModalScreen with the upload progress/result.
+    """
+
+    def __init__(self, path, status):
+        super().__init__()
+        self.path = os.path.basename(path)
+        self.status = status
+        self.dismiss_button = Button(
+                "Dismiss",
+                variant="primary",
+                compact=True,
+                disabled=False,
+                id="dismiss"
+                )
+
+
+    def compose(self) -> ComposeResult:
+        if self.status == "cancelled":
+            msg = f"[yellowUpload of {self.path}[/] cancelled"
+        elif self.status == "completed":
+            msg = f"[green]Uploaded {self.path}[/]"
+        elif self.status == "failed":
+            msg = f"[red]Upload of {self.path} failed![/]"
+
+        yield Grid(
+            Label(msg, id="message"),
+            self.dismiss_button,
+            id="upload_result",
+        ) 
+    # End compose() 
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "dismiss":
+            self.app.pop_screen()
+    # End on_button_pressed() 
+# End Class UploadResult 
+
+
+# Modal Screen with arbitrary message 
+class InfoDialogue(ModalScreen):
+    """
+    Provides a ModalScreen with an info dialogue.
+    """
+
+    def __init__(self, msg):
+        super().__init__()
+        self.msg = msg
+        self.dismiss_button = Button(
+                "Dismiss",
+                variant="primary",
+                compact=True,
+                disabled=False,
+                id="dismiss"
+                )
+
+
+    def compose(self) -> ComposeResult:
+        yield Grid(
+            Label(msg, id="message"),
+            self.dismiss_button,
+            id="info_dialogue",
+        ) 
+    # End compose() 
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "dismiss":
+            self.app.pop_screen()
+    # End on_button_pressed() 
+# End Class UploadResult 
+
+
 
 
 # Extend the EventHandler class 
@@ -566,13 +708,104 @@ class OpenaiAssistant(App):
     Input_TextArea {
         height: 20%;
     }
+
+    #tree-view {
+        display: none;
+        scrollbar-gutter: stable;
+        overflow: auto;
+        width: auto;
+        height: 100%;
+        dock: left;
+    }
+
+    OpenaiAssistant.-show-tree #tree-view {
+        display: block;
+        max-width: 50%;
+    }
+
+    QuitDialogue {
+        align: center middle;
+    }
+
+    UploadDialogue {
+        align: center middle;
+    }
+
+    UploadResult {
+        align: center middle;
+    }
+
+    InfoDialogue {
+        align: center middle;
+    }
+
+    #quit_dialogue {
+        grid-size: 2;
+        grid-gutter: 1 2;
+        grid-rows: 1fr 3;
+        padding: 0 1;
+        width: 40;
+        height: 11;
+        border: thick $background 80%;
+        background: $surface;
+    }
+
+    #upload_dialogue {
+        grid-size: 2;
+        grid-gutter: 1 2;
+        grid-rows: 1fr 3;
+        padding: 0 1;
+        width: 50;
+        height: 10;
+        border: thick $background 80%;
+        background: $surface;
+    }
+
+    #upload_result {
+        grid-size: 1 2;
+        grid-gutter: 1 2;
+        grid-rows: 1fr 3;
+        padding: 0 1;
+        width: 50;
+        height: 10;
+        border: thick $background 80%;
+        background: $surface;
+    }
+
+    #info_dialogue {
+        grid-size: 1 2;
+        grid-gutter: 1 2;
+        grid-rows: 1fr 3;
+        padding: 0 1;
+        width: 50;
+        height: 10;
+        border: thick $background 80%;
+        background: $surface;
+    }
+
+    #message {
+        column-span: 2;
+        height: 1fr;
+        width: 1fr;
+        content-align: center middle;
+    }
+
+    Button {
+        width: 100%;
+    }
     """
 
     # Key bindings for Footer and help panel 
     BINDINGS = [
         Binding(key="ctrl+backslash", action="submit", description="Submit Input"),
         Binding(key="ctrl+q", action="quit", description="Quit"),
+        Binding(key="ctrl+b", action="toggle_file_view", description="Toggle File-Upload Browser"),
+        Binding(key="ctrl+i", action="info", description="Info"),
     ]
+
+    #Hide file tree on start 
+    show_tree = var(False)
+    path: reactive[str | None] = reactive(None)
 
     # Create input widget and chat display widget
     input_area = Input_TextArea()
@@ -593,15 +826,19 @@ class OpenaiAssistant(App):
         """
         Composes UI elements.
         """
+        path = homedir
         resp_area = DisplayResponse(
             f"Hello {self.your_name}, I’m ready to help! Just type your input below.\n\n"
-            "Hints: Submit with `Ctrl+Backslash`, new line with `Enter`, quit with `Ctrl+Q`.",
+             "Hints: Submit with `Ctrl+Backslash`, new line with `Enter`, quit with `Ctrl+Q`.\n"
+             "Toggle widget focus with `Tab`",
             border_title=self.assistant_name,
         )
         yield Header(show_clock=True)
-        with self.chat_view:
-            yield resp_area
-        yield self.input_area
+        with Container():
+            with self.chat_view:
+                yield resp_area
+            yield self.input_area
+            yield DirectoryTree(path, id="tree-view")
         yield Footer()
     # End compose() 
 
@@ -620,7 +857,7 @@ class OpenaiAssistant(App):
                 if lf:
                     lf.write("\nMe:\n"+text+"\n\n")
             except Exception as e:
-                print(f"[red]Error writing user input to log: {e}")
+                c.print_exception(f"[red]Error writing user input to log: {e}")
             self.input_area.load_text("Thinking...")
             await self.chat_view.mount(
                 DisplayPrompt(text,
@@ -631,12 +868,68 @@ class OpenaiAssistant(App):
                     lf.write("\n"+self.assistant_name+":\n"+resp+"\n\n")
                     lf.flush()
             except Exception as e:
-                print(f"[red]Error writing AI response to log: {e}")
+                c.print_exception(f"[red]Error writing AI response to log: {e}")
             await self.chat_view.mount(
                 DisplayResponse(resp,
                                 border_title=self.assistant_name))
             self.input_area.clear()
     # End on_key() 
+
+
+    def do_file_upload(self, path: str) -> None:
+        result = self.api.file_upload(path)
+        status = result.status.strip()
+        uploaded = UploadResult(path, status)
+        self.push_screen(uploaded)
+    # End do_file_upload() 
+
+
+    def on_directory_tree_file_selected(
+        self, event: DirectoryTree.FileSelected
+    ) -> None:
+        """
+        Called when the user clicks a file in the directory tree.
+        """
+        event.stop()
+        self.path = str(event.path)
+
+        # Called when UploadDialogue is dismissed.
+        def _check_upload(upload: bool | None) -> None:
+            if upload:
+                self.do_file_upload(self.path)
+        # End
+
+        upload_dialogue = UploadDialogue(self.path)
+        self.push_screen(upload_dialogue, _check_upload)
+    # End on_directory_tree_file_selection() 
+
+
+    def watch_show_tree(self, show_tree: bool) -> None:
+        """
+        Called when show_tree is modified.
+        """
+        self.set_class(show_tree, "-show-tree")
+    # End watch_show_tree() 
+
+
+    def action_toggle_file_view(self) -> None:
+        """Called in response to key binding."""
+        self.show_tree = not self.show_tree
+    # End action_toggle_file_view() 
+
+
+    def action_quit(self) -> None:
+        """
+        Action to display the quit dialogue.
+        """
+        self.push_screen(QuitDialogue())
+
+    def action_info(self) -> None:
+        """
+        Action to display the info dialogue.
+        """
+        msg = f"OpenAI Assistant v{__version__}"
+        self.push_screen(InfoDialogue(msg))
 # End Class OpenaiAssistant
 
 
@@ -644,102 +937,111 @@ class OpenaiAssistant(App):
 if __name__ == "__main__":
     # Clear terminal
     os.system('clear')
-    print(f"\n[#f5d676 b]OpenAI Assistant {__version__}[/]\n")
-    print("[green]Initialising settings and backend...[/]\n")
+    print(f"\n[#f5d676 b u]OpenAI Assistant {__version__}[/]\n")
 
-    # Get current date and time
-    now = datetime.now()
-    # Format as e.g. '9 June 2025 9:52pm'
-    tstamp = now.strftime('%-d %B %Y %-I:%M%p')
-
-    ## Some global definitions
-    # Define home directory and config paths
-    homedir     = str(Path.home()) + "/"
-    CONFIG_DIR  = Path(homedir) / ".openai"
-    CONFIG_PATH = CONFIG_DIR / "settings.py"
-    logfile = homedir + ".openai/chat_log.txt"
-
+    c = Console()
     try:
-        # CLI flags
-        parser = argparse.ArgumentParser(
-            prog="openai-assistant",
-            description="Terminal client for the OpenAI Assistants API",
-        )
-        parser.add_argument(
-            "--no-upload",
-            action="store_true",
-            help="Do not upload ~/.openai/chat_log.txt on startup",
-        )
-        parser.add_argument(
-            "--reset-assistant",
-            action="store_true",
-            help="Ignore and clear ASSISTANT_ID in settings before startup",
-        )
-        parser.add_argument(
-            "--reset-store",
-            action="store_true",
-            help="Ignore and clear VECTOR_STORE_ID in settings before startup",
-        )
-        parser.add_argument(
-            "--debug-api",
-            action="store_true",
-            help="Enable DEBUG level API logging to ~/.openai/api.log",
-        )
-        args = parser.parse_args()
+        print("[green]Aquiring settings and configuration[/]")
+        with c.status(""):
+            sleep(1)
+            # Get current date and time
+            now = datetime.now()
+            # Format as e.g. '9 June 2025 9:52pm'
+            tstamp = now.strftime('%-d %B %Y %-I:%M%p')
 
-        # Get and load  settings, prompt for missing settings
-        settings = load_settings()
-        # Apply resets if requested
-        if args.reset_assistant:
-            settings["ASSISTANT_ID"] = ""
+            ## Some global definitions
+            # Define home directory and config paths
+            homedir     = str(Path.home()) + "/"
+            CONFIG_DIR  = Path(homedir) / ".openai"
+            CONFIG_PATH = CONFIG_DIR / "settings.py"
+            logfile = homedir + ".openai/chat_log.txt"
+
+            # CLI flags
+            parser = argparse.ArgumentParser(
+                prog="openai-assistant",
+                description="Terminal client for the OpenAI Assistants API",
+            )
+            parser.add_argument(
+                "--no-upload",
+                action="store_true",
+                help="Do not upload ~/.openai/chat_log.txt on startup",
+            )
+            parser.add_argument(
+                "--reset-assistant",
+                action="store_true",
+                help="Ignore and clear ASSISTANT_ID in settings before startup",
+            )
+            parser.add_argument(
+                "--reset-store",
+                action="store_true",
+                help="Ignore and clear VECTOR_STORE_ID in settings before startup",
+            )
+            parser.add_argument(
+                "--debug-api",
+                action="store_true",
+                help="Enable DEBUG level API logging to ~/.openai/api.log",
+            )
+            args = parser.parse_args()
+
+            # Get and load  settings, prompt for missing settings
+            settings = load_settings()
+
+            # Apply resets if requested
+            if args.reset_assistant:
+                settings["ASSISTANT_ID"] = ""
+                try:
+                    write_setting("ASSISTANT_ID", "")
+                    print("Reset ASSISTANT_ID in settings.")
+                except Exception:
+                    pass
+            if args.reset_store:
+                settings["VECTOR_STORE_ID"] = ""
+                try:
+                    write_setting("VECTOR_STORE_ID", "")
+                    print("Reset VECTOR_STORE_ID in settings.")
+                except Exception:
+                    pass
+            config_app()
+
+            # Configure API logger
+            api_logfile = homedir + ".openai/api.log"
+            api_logger = logging.getLogger("openai_assistant.api")
+            api_logger.setLevel(logging.DEBUG if args.debug_api else logging.INFO)
+            handler = TimedRotatingFileHandler(api_logfile, when="midnight", backupCount=7, encoding="utf-8")
+            handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+            if not any(getattr(h, "baseFilename", None) == handler.baseFilename for h in api_logger.handlers):
+                api_logger.addHandler(handler)
+            api_logger.info("startup: settings initialised")
+
+            # Open chat log file in append mode
+            lf = open(logfile, 'a', encoding='utf-8')
+
+
+        print("[green]Connecting to OpenAI API endpoint[/]")
+        with c.status(""):
+            sleep(1)
+            # Initialise OpenAI client
+            api = Openai_API(settings, logger=api_logger)
+            # Log config summary (no secrets)
             try:
-                write_setting("ASSISTANT_ID", "")
-                print("Reset ASSISTANT_ID in settings.")
+                api_logger.info("config: model="+str(settings.get('MODEL'))+" temp="+str(settings.get('TEMP'))+" assistant_id="+("yes" if settings.get('ASSISTANT_ID') else "no")+" vector_store_id="+("yes" if settings.get('VECTOR_STORE_ID') else "no"))
             except Exception:
                 pass
-        if args.reset_store:
-            settings["VECTOR_STORE_ID"] = ""
-            try:
-                write_setting("VECTOR_STORE_ID", "")
-                print("Reset VECTOR_STORE_ID in settings.")
-            except Exception:
-                pass
-        config_app()
-
-        # Configure API logger
-        api_logfile = homedir + ".openai/api.log"
-        api_logger = logging.getLogger("openai_assistant.api")
-        api_logger.setLevel(logging.DEBUG if args.debug_api else logging.INFO)
-        handler = TimedRotatingFileHandler(api_logfile, when="midnight", backupCount=7, encoding="utf-8")
-        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-        if not any(getattr(h, "baseFilename", None) == handler.baseFilename for h in api_logger.handlers):
-            api_logger.addHandler(handler)
-        api_logger.info("startup: settings initialised")
 
 
-        # Open chat log file in append mode
-        lf = open(logfile, 'a', encoding='utf-8')
-
-        # Initialise OpenAI client
-        api = Openai_API(settings, logger=api_logger)
-        # Log config summary (no secrets)
-
-        try:
-            api_logger.info("config: model="+str(settings.get('MODEL'))+" temp="+str(settings.get('TEMP'))+" assistant_id="+("yes" if settings.get('ASSISTANT_ID') else "no")+" vector_store_id="+("yes" if settings.get('VECTOR_STORE_ID') else "no"))
-        except Exception:
-            pass
-
-        # Set up configuration and upload chat_log.txt
-        upload = api.setup(upload_log=(not args.no_upload))  # All CLI prompts and setup happen here
-        status = upload.status.strip()
-        if status == "cancelled":
-            print("Skipping chat log upload.")
-        elif status == "completed":
-            print(f"Uploaded [#d5d676]{logfile}[/]\n")
-        elif status == "failed":
-            print(f"Upload of [red]{logfile}[/] failed!\n")
-        # a little time to read msg
-        sleep(3)
+        print("[green]Loading configuration and uploading chat log[/]")
+        with c.status(""):
+            # Set up configuration and upload chat_log.txt
+            upload = api.setup(upload_log=(not args.no_upload))  # All CLI prompts and setup happen here
+            status = upload.status.strip()
+            if status == "cancelled":
+                print("\n[yellow]Skipping chat log upload.[/]\n")
+            elif status == "completed":
+                print(f"\nUploaded [#d5d676]{logfile}[/]\n")
+            elif status == "failed":
+                print(f"\nUpload of [red]{logfile}[/] failed!\n")
+            # a little time to read msg
+            sleep(3)
 
         # Now launch the TUI, passing the API and settings objects
         app = OpenaiAssistant(api, settings)
@@ -750,4 +1052,5 @@ if __name__ == "__main__":
         app.run()
         lf.close()
     except Exception as e:
-        print(f"[red]Caught:[/] {e}")
+        c.print_exception(f"[red]Caught:[/] {e}")
+
