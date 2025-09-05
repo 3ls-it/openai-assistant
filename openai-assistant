@@ -4,7 +4,7 @@ openai-assistant v2
 Copyright 2025 J Adams jfa63[at]duck[dot]com
 Released under the 2-Clause BSD license.
 """
-__version__ = 'v2.2.0-beta'
+__version__ = 'v2.2.0'
 __author__ = 'J. Adams jfa63[at]duck[dot]com'
 
 # Builtin imports
@@ -225,7 +225,7 @@ class UploadDialogue(ModalScreen):
 # End Class UploadDialogue
 
 
-# Modal Screen with upload progress 
+# Modal Screen with upload result 
 class UploadResult(ModalScreen):
     """
     Provides a ModalScreen with the upload progress/result.
@@ -267,7 +267,7 @@ class UploadResult(ModalScreen):
 
 
 # Modal Screen with arbitrary message 
-class InfoDialogue(ModalScreen):
+class AboutDialogue(ModalScreen):
     """
     Provides a ModalScreen with an info dialogue.
     """
@@ -296,9 +296,7 @@ class InfoDialogue(ModalScreen):
         if event.button.id == "dismiss":
             self.app.pop_screen()
     # End on_button_pressed() 
-# End Class UploadResult 
-
-
+# End Class InfoDialogue 
 
 
 # Extend the EventHandler class 
@@ -735,7 +733,7 @@ class OpenaiAssistant(App):
         align: center middle;
     }
 
-    InfoDialogue {
+    AboutDialogue {
         align: center middle;
     }
 
@@ -930,11 +928,11 @@ class OpenaiAssistant(App):
         Action to display the info dialogue.
         """
         msg = f"""
-      OpenAI Assistant {__version__}\n\n
+      [#f5d676 b]OpenAI Assistant {__version__}[/]\n\n
 Released under the Two-Clause BSD License\n
    (c) 2025 J. Adams jfa63atduckdotcom
         """
-        self.push_screen(InfoDialogue(msg))
+        self.push_screen(AboutDialogue(msg))
 # End Class OpenaiAssistant
 
 
