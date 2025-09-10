@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/env python3
+#!/usr/bin/env python3
 """
 openai-assistant v2
 Copyright 2025 J Adams jfa63[at]duck[dot]com
@@ -277,7 +277,7 @@ class InfoDialogue(ModalScreen):
         self.msg = msg
         self.dismiss_button = Button(
                 "Dismiss",
-                variant="primary",
+                variant="warning",
                 compact=True,
                 disabled=False,
                 id="dismiss"
@@ -286,7 +286,7 @@ class InfoDialogue(ModalScreen):
 
     def compose(self) -> ComposeResult:
         yield Grid(
-            Label(msg, id="message"),
+            Label(self.msg, id="message"),
             self.dismiss_button,
             id="info_dialogue",
         ) 
@@ -775,10 +775,10 @@ class OpenaiAssistant(App):
     #info_dialogue {
         grid-size: 1 2;
         grid-gutter: 1 2;
-        grid-rows: 1fr 3;
+        grid-rows: 1fr 5;
         padding: 0 1;
         width: 50;
-        height: 10;
+        height: 20;
         border: thick $background 80%;
         background: $surface;
     }
@@ -800,7 +800,7 @@ class OpenaiAssistant(App):
         Binding(key="ctrl+backslash", action="submit", description="Submit Input"),
         Binding(key="ctrl+q", action="quit", description="Quit"),
         Binding(key="ctrl+b", action="toggle_file_view", description="Toggle File-Upload Browser"),
-        Binding(key="ctrl+i", action="info", description="Info"),
+        Binding(key="f1", action="about", description="About"),
     ]
 
     #Hide file tree on start 
@@ -924,11 +924,16 @@ class OpenaiAssistant(App):
         """
         self.push_screen(QuitDialogue())
 
-    def action_info(self) -> None:
+
+    def action_about(self) -> None:
         """
         Action to display the info dialogue.
         """
-        msg = f"OpenAI Assistant v{__version__}"
+        msg = f"""
+      OpenAI Assistant {__version__}\n\n
+Released under the Two-Clause BSD License\n
+   (c) 2025 J. Adams jfa63atduckdotcom
+        """
         self.push_screen(InfoDialogue(msg))
 # End Class OpenaiAssistant
 
