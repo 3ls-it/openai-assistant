@@ -4,7 +4,7 @@ openai-assistant v2
 Copyright 2025 J Adams jfa63[at]duck[dot]com
 Released under the 2-Clause BSD license.
 """
-__version__ = 'v2.2.0'
+__version__ = 'v2.2.1'
 __author__ = 'J. Adams jfa63[at]duck[dot]com'
 
 # Builtin imports
@@ -37,8 +37,7 @@ from rich import print
 from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Center, Container, Grid, Middle, VerticalScroll
-from textual.highlight import highlight
+from textual.containers import Container, Grid, VerticalScroll
 from textual.reactive import reactive, var
 from textual.screen import ModalScreen
 from textual.widgets import (Button,
@@ -47,7 +46,6 @@ from textual.widgets import (Button,
                              Header,
                              Label,
                              Markdown,
-                             ProgressBar,
                              TextArea,
                             )
 
@@ -911,7 +909,10 @@ class OpenaiAssistant(App):
 
 
     def action_toggle_file_view(self) -> None:
-        """Called in response to key binding."""
+        """
+        Called in response to key binding.
+        """
+        self.query_one("#tree-view", DirectoryTree).reload()
         self.show_tree = not self.show_tree
     # End action_toggle_file_view() 
 
@@ -1033,18 +1034,17 @@ if __name__ == "__main__":
 
 
         print("[green]Loading configuration and uploading chat log[/]")
-        with c.status(""):
-            # Set up configuration and upload chat_log.txt
-            upload = api.setup(upload_log=(not args.no_upload))  # All CLI prompts and setup happen here
-            status = upload.status.strip()
-            if status == "cancelled":
-                print("\n[yellow]Skipping chat log upload.[/]\n")
-            elif status == "completed":
-                print(f"\nUploaded [#d5d676]{logfile}[/]\n")
-            elif status == "failed":
-                print(f"\nUpload of [red]{logfile}[/] failed!\n")
-            # a little time to read msg
-            sleep(3)
+        # Set up configuration and upload chat_log.txt
+        upload = api.setup(upload_log=(not args.no_upload))  # All CLI prompts and setup happen here
+        status = upload.status.strip()
+        if status == "cancelled":
+            print("\n[yellow]Skipping chat log upload.[/]\n")
+        elif status == "completed":
+            print(f"\nUploaded [#d5d676]{logfile}[/]\n")
+        elif status == "failed":
+            print(f"\nUpload of [red]{logfile}[/] failed!\n")
+        # a little time to read msg
+        sleep(3)
 
         # Now launch the TUI, passing the API and settings objects
         app = OpenaiAssistant(api, settings)
