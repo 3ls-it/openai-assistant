@@ -230,11 +230,17 @@ class ImageDialogue(ModalScreen):
         descr = self.query_one("#description_input", TextArea).text
         fname = self.query_one("#filename_input", Input).value
         fut = getattr(self.app, "_image_future", None)
+
+        if event.button.id == "create":
+            if os.path.exists(fname):
+                self.app.notify(f"File '{fname}' already exists.", severity="warning")
+                # Don't close, let the user correct the filename
+                return
+
         if fut and not fut.done():
-            if event.button.id == "create":
-                fut.set_result((descr, fname))
-            else:
-                fut.set_result((None, None))
+            fut.set_result((descr, fname))
+        else:
+            fut.set_result((None, None))
         self.app.pop_screen()
 # End Class ImageDialogue
 
@@ -243,6 +249,7 @@ class ImageDialogue(ModalScreen):
 class AboutDialogue(ModalScreen):
     """
     Provides a ModalScreen with an info dialogue.
+    Used for "About" when F1 is pressed.
     """
 
     def __init__(self, msg):
