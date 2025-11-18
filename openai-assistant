@@ -40,8 +40,10 @@ from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Grid, VerticalScroll
+from textual.message import Message
 from textual.reactive import reactive, var
-from textual.screen import ModalScreen
+from textual.screen import ModalScreen, Screen
+import textual.widget 
 from textual.widgets import (Button,
                              DirectoryTree,
                              Footer,
@@ -236,12 +238,12 @@ class ImageDialogue(ModalScreen):
                 self.app.notify(f"File '{fname}' already exists.", severity="warning")
                 # Don't close, let the user correct the filename
                 return
-
-        if fut and not fut.done():
-            fut.set_result((descr, fname))
-        else:
+            if fut and not fut.done():
+                fut.set_result((descr, fname))
+            self.app.pop_screen()
+        elif event.button.id == "cancel":
             fut.set_result((None, None))
-        self.app.pop_screen()
+            self.app.pop_screen()
 # End Class ImageDialogue
 
 
@@ -277,6 +279,99 @@ class AboutDialogue(ModalScreen):
             self.app.pop_screen()
     # End on_button_pressed() 
 # End Class InfoDialogue 
+
+
+class ChatFileSelected(Message):
+    def __init__(self, sender, path, method):
+        super().__init__()
+        self.path = path
+        self.method = method  # "left-click", "right-click" ^ "enter"
+# End Class ChatFileSelected
+
+
+class ChatDirectoryTree(DirectoryTree):
+
+    #def __init__(self, path, *args, **kwargs):
+    #    super().__init__(path, *args, **kwargs)
+
+    async def on_directory_tree_file_selected(
+                self, event: DirectoryTree.FileSelected
+    ) -> None:
+        event.stop()
+
+    async def on_mouse_down(self, event: events.MouseEvent) -> None:
+        event.stop()
+        node_index = event.style.meta.get("node")
+        if node_index is not None:
+            node = self.get_node_at_line(node_index)
+            path = node.data.path  # full path
+            if event.button == 1:  # Left click
+                self.post_message(ChatFileSelected(self, path, "left-click"))
+            elif event.button == 3:  # Right click
+                self.post_message(ChatFileSelected(self, path, "right-click"))
+
+    async def on_key(self, event: events.Key) -> None:
+        if event.key == "enter":
+            node = self.cursor_node
+            if node is not None:
+                path = node.data.path
+                self.post_message(ChatFileSelected(self, path, "enter"))
+# End Class ChatDirectoryTree
+
+
+class ShowChat(Markdown):
+    """
+    Encapsulates a Markdown widget for LLM response display
+    """
+    def __init__(self, text="", border_title="", *args, **kwargs):
+        super().__init__(text, *args, **kwargs)
+# End Class ShowChat
+
+
+class ChatBrowser(Screen):
+    """
+    Provides the screen for browsing/selecting previous
+    chats.
+    """
+
+    BINDINGS = [("escape", "app.pop_screen", "Close screen")]
+
+    file_label = Label("[green b]Select File[/]", id="file-label")
+    show_chat = ShowChat()
+
+    def compose(self) -> ComposeResult:
+        self.show_chat.visible = True
+        homedir = Path.home()
+        dir_path = homedir / ".openai/chats/"
+
+        yield Header()
+        with Container():
+            yield Label("")
+            yield Label("[#f5d676 b]Chat Browser (ESC to quit)[/]")
+            yield self.file_label
+            yield Label("")
+            yield self.show_chat
+            yield ChatDirectoryTree(dir_path, id="chat-view")
+
+
+    def on_chat_file_selected(self, event: ChatFileSelected) -> None:
+        """
+        Called when the user clicks on a chat file.
+        """
+        event.stop()
+        meth = event.method
+        path = str(event.path)
+        chat_fname = os.path.basename(path)
+        
+        if meth == "left-click":
+            with open(path, "rt") as f:
+               content = f.read() 
+            self.file_label.update(f"[blue b]{chat_fname}[/]")
+            self.show_chat.update(content) 
+        elif meth == "enter":
+            self.app.upload_chat(path)
+            self.app.pop_screen()
+# End Class ChatBrowser
 
 
 # Extend the EventHandler class 
@@ -449,7 +544,7 @@ class Openai_API():
     # End file_upload()
 
 
-    def setup(self, upload_log: bool = True) -> VectorStoreFileBatch:
+    def setup(self) -> None:
         """
         Creates Assistant instance and Vector Store.
         """
@@ -458,81 +553,64 @@ class Openai_API():
         # additional guidance from settings (FURTHER_INSTRUCTIONS).
         instructions = f"You are {self.assistant_name}, {self.your_name}'s personal AI assistant."
         further = (self.config.get("FURTHER_INSTRUCTIONS") or "").strip()
+
         if further:
             instructions = f"{instructions}\n\n{further}"
 
         if self.config.get("ASSISTANT_ID"):
-         self.assistant = self.client.beta.assistants.retrieve(
-             assistant_id=self.config["ASSISTANT_ID"]
-         )
-         try:
-             self.logger.info(f"assistant retrieved id={self.assistant.id} model={self.gpt_model}")
-         except Exception:
-             pass
+            self.assistant = self.client.beta.assistants.retrieve(
+                             assistant_id=self.config["ASSISTANT_ID"])
+            try:
+                self.logger.info(f"assistant retrieved id={self.assistant.id} model={self.gpt_model}")
+            except Exception:
+                pass
         else:
-         # Prompt for assistant creation
-         print("No ASSISTANT_ID found. Creating new assistant...")
-         self.assistant = self.client.beta.assistants.create(
-             instructions=instructions,
-             name=self.assistant_name,
-             tools=[{"type": "code_interpreter"}, {"type": "file_search"}],
-             model=self.gpt_model,
-             temperature=self.temp
-         )
-         print(f"Created new assistant with ID {self.assistant.id}")
-         try:
-             self.logger.info(f"assistant created id={self.assistant.id} model={self.gpt_model}")
-         except Exception:
-             pass
-         resp = input("Save ASSISTANT_ID to config? [Y/n] ").strip().lower()
-         if resp in ("", "y", "yes"):
-             write_setting("ASSISTANT_ID", self.assistant.id)
-             print("Updated ASSISTANT_ID in config.")
-         else:
-             print("ASSISTANT_ID not saved; will create new next run.")
+            # Prompt for assistant creation
+            print("No ASSISTANT_ID found. Creating new assistant...")
+            self.assistant = self.client.beta.assistants.create(
+                instructions=instructions,
+                name=self.assistant_name,
+                tools=[{"type": "code_interpreter"}, {"type": "file_search"}],
+                model=self.gpt_model,
+                temperature=self.temp
+            )
+            print(f"Created new assistant with ID {self.assistant.id}")
+
+            try:
+                self.logger.info(f"assistant created id={self.assistant.id} model={self.gpt_model}")
+            except Exception:
+                pass
+
+            resp = input("Save ASSISTANT_ID to config? [Y/n] ").strip().lower()
+            if resp in ("", "y", "yes"):
+                write_setting("ASSISTANT_ID", self.assistant.id)
+                print("Updated ASSISTANT_ID in config.")
+            else:
+                print("ASSISTANT_ID not saved; will create new next run.")
 
         ## Vector Store setup
         if self.config.get("VECTOR_STORE_ID"):
-         self.vector_store = self.client.vector_stores.retrieve(
-             vector_store_id=self.config["VECTOR_STORE_ID"]
-         )
-         try:
-             self.logger.info(f"vector_store retrieved id={self.vector_store.id}")
-         except Exception:
-             pass
-        else:
-         print("No VECTOR_STORE_ID found. Creating new vector store...")
-         self.vector_store = self.client.vector_stores.create(name="Chat History")
-         print(f"Created new vector store with ID {self.vector_store.id}")
-         try:
-             self.logger.info(f"vector_store created id={self.vector_store.id}")
-         except Exception:
-             pass
-         resp = input("Save VECTOR_STORE_ID to config? [Y/n] ").strip().lower()
-         if resp in ("", "y", "yes"):
-             write_setting("VECTOR_STORE_ID", self.vector_store.id)
-             print("Updated VECTOR_STORE_ID in config.")
-         else:
-             print("VECTOR_STORE_ID not saved; will create new next run.")
-
-        ## Upload chat_log.txt (optional)
-        if upload_log:
-            upload = self.file_upload(logfile)
-        else:
-            upload = VectorStoreFileBatch(
-                id="",
-                created_at=0,
-                file_counts={
-                    "cancelled": 1,
-                    "completed": 0,
-                    "failed": 0,
-                    "in_progress": 0,
-                    "total": 0,
-                },
-                object="vector_store.files_batch",
-                vector_store_id=self.vector_store.id if self.vector_store else "",
-                status="cancelled",
+            self.vector_store = self.client.vector_stores.retrieve(
+                vector_store_id=self.config["VECTOR_STORE_ID"]
             )
+            try:
+                self.logger.info(f"vector_store retrieved id={self.vector_store.id}")
+            except Exception:
+                pass
+        else:
+            print("No VECTOR_STORE_ID found. Creating new vector store...")
+            self.vector_store = self.client.vector_stores.create(name="Chat History")
+            print(f"Created new vector store with ID {self.vector_store.id}")
+            try:
+                self.logger.info(f"vector_store created id={self.vector_store.id}")
+            except Exception:
+                pass
+            resp = input("Save VECTOR_STORE_ID to config? [Y/n] ").strip().lower()
+            if resp in ("", "y", "yes"):
+                write_setting("VECTOR_STORE_ID", self.vector_store.id)
+                print("Updated VECTOR_STORE_ID in config.")
+            else:
+                print("VECTOR_STORE_ID not saved; will create new next run.")
 
         ## Update assistant with vector store and ensure instructions are in-sync
         update_kwargs = {
@@ -575,7 +653,6 @@ class Openai_API():
             self.logger.info(f"thread created id={self.thread.id}")
         except Exception:
             pass
-        return upload
     # End setup() 
 
 
@@ -662,6 +739,26 @@ class OpenaiAssistant(App):
     TITLE = "OpenAI Assistant"
     SUB_TITLE = f"{__version__}  •  Submit: Ctrl+\\  •  Quit: Ctrl+Q"
     AUTO_FOCUS = "Input_TextArea"
+    #SCREENS = {'chat_browser': ChatBrowser}
+    #chat_browser = ChatBrowser(homedir)
+
+    # Key bindings for Footer and help panel 
+    BINDINGS = [
+        Binding(key="ctrl+backslash", action="submit", description="Submit Input"),
+        Binding(key="ctrl+q", action="quit", description="Quit"),
+        Binding(key="ctrl+b", action="toggle_file_view", description="Toggle File-Upload Browser"),
+        Binding(key="f1", action="about", description="About"),
+        Binding("f2", "push_screen('chat_browser')", "Browse Chats"),
+        Binding(key="f3", action="gen_image", description="Generate Image"),
+    ]
+
+    #Hide file tree on start 
+    show_tree = var(False)
+    path: reactive[str | None] = reactive(None)
+ 
+    # Create input widget and chat display widget
+    input_area = Input_TextArea()
+    chat_view = VerticalScroll()
 
     # Style sheets for widgets 
     CSS = """
@@ -688,6 +785,12 @@ class OpenaiAssistant(App):
         height: 20%;
     }
 
+    ShowChat {
+        border: round #f5d676;
+        height: 90%;
+        overflow: auto;
+    }
+
     StatusWidget {
         border: round #f5d676;
     }
@@ -701,9 +804,26 @@ class OpenaiAssistant(App):
         dock: left;
     }
 
+    #chat-view {
+        scrollbar-gutter: stable;
+        overflow: auto;
+        width: auto;
+        height: 100%;
+        dock: left;
+    }
+
     OpenaiAssistant.-show-tree #tree-view {
         display: block;
         max-width: 50%;
+    }
+
+    ChatBrowser.-show-tree #chat-view {
+        display: block;
+        max-width: 25%;
+    }
+
+    ChatBrowser {
+        align: center middle;
     }
 
     QuitDialogue {
@@ -804,24 +924,6 @@ class OpenaiAssistant(App):
     }
     """
 
-    # Key bindings for Footer and help panel 
-    BINDINGS = [
-        Binding(key="ctrl+backslash", action="submit", description="Submit Input"),
-        Binding(key="ctrl+q", action="quit", description="Quit"),
-        Binding(key="ctrl+b", action="toggle_file_view", description="Toggle File-Upload Browser"),
-        Binding(key="f1", action="about", description="About"),
-        Binding(key="f2", action="gen_image", description="Generate Image"),
-    ]
-
-    #Hide file tree on start 
-    show_tree = var(False)
-    path: reactive[str | None] = reactive(None)
-
-    # Create input widget and chat display widget
-    input_area = Input_TextArea()
-    chat_view = VerticalScroll()
-
-
 
     # Methods -------- #
     def on_mount(self) -> None:
@@ -829,6 +931,7 @@ class OpenaiAssistant(App):
         Sets default theme.
         """
         self.theme = "flexoki"
+        self.install_screen(ChatBrowser(), name='chat_browser')
     # End on_mount() 
 
 
@@ -868,7 +971,11 @@ class OpenaiAssistant(App):
                 if lf:
                     lf.write("\nMe:\n"+text+"\n\n")
             except Exception as e:
-                c.print_exception(f"[red]Error writing user input to log: {e}")
+                self.notify(f"[red]Error writing user input to log: {e}",
+                            title="Error Saving File!",
+                            severity="error",
+                            timeout=5)
+
             self.input_area.load_text("Thinking...")
             await self.chat_view.mount(
                 DisplayPrompt(text,
@@ -879,7 +986,10 @@ class OpenaiAssistant(App):
                     lf.write("\n"+self.assistant_name+":\n"+resp+"\n\n")
                     lf.flush()
             except Exception as e:
-                c.print_exception(f"[red]Error writing AI response to log: {e}")
+                self.notify(f"[red]Error writing AI response to log: {e}",
+                            title="Error Saving File!",
+                            severity="error",
+                            timeout=5)
             await self.chat_view.mount(
                 DisplayResponse(resp,
                                 border_title=self.assistant_name))
@@ -888,7 +998,7 @@ class OpenaiAssistant(App):
 
 
     # Status widget helper method
-    def show_status(self, message: str):
+    def show_status(self, message: str) -> None:
         status = self.query_one("#status", StatusWidget)
         status.update(message)
 
@@ -898,7 +1008,10 @@ class OpenaiAssistant(App):
         status = result.status.strip()
         uploaded = UploadResult(path, status)
         self.push_screen(uploaded)
-    # End do_file_upload() 
+
+
+    def upload_chat(self, path) -> None:
+        self.notify(f"Upload {path}")
 
 
     def generate_image(self, descr, fname) -> None:
@@ -947,7 +1060,7 @@ class OpenaiAssistant(App):
 
         upload_dialogue = UploadDialogue(self.path)
         self.push_screen(upload_dialogue, _check_upload)
-    # End on_directory_tree_file_selection() 
+    # End on_directory_tree_file_selected() 
 
 
     def watch_show_tree(self, show_tree: bool) -> None:
@@ -971,33 +1084,24 @@ class OpenaiAssistant(App):
             asyncio.get_running_loop().call_soon_threadsafe(
                     lambda: asyncio.create_task(self._run_gen_image(descr, fname)))
         self._image_future.add_done_callback(_on_done)
-        
     # Helper
     async def _run_gen_image(self, descr, fname):
         if (descr is not None) and (fname is not None):
             loop = asyncio.get_running_loop()
             # Show status
-            self.api.logger.debug("about to update status")
             self.show_status(f"Generating image {fname}")
-            self.api.logger.debug("about to do asyncio.sleep(0)")
             await asyncio.sleep(0)
             self.api.logger.debug("about to enter try block")
 
             # Run generate_image in a thread pool
             try:
-                self.api.logger.debug("inside try block")
                 await loop.run_in_executor(
                         None,  # None = default ThreadPoolExecutor
                         self.generate_image, descr, fname)
-                # After generate_image is done, notify hide status
-                #self.hide_status()
                 self.api.logger.info(f"Image generated: {fname}")
             except Exception as e:
-                #self.hide_status()
                 self.api.logger.error(f"Image generation failed:\n{e}")
                 self.notify(f"Image generation failed:\n{e}", severity="error", timeout=5)
-            self.api.logger.debug("after try block")
-
         else:
             self.api.logger.error("Did not get values/canceled")
             self.notify("Did not get values or canceled.", severity="error", timeout=5)
@@ -1036,6 +1140,7 @@ Released under the Two-Clause BSD License\n
 
 
 if __name__ == "__main__":
+
     # Helper to load configuration settings
     def load_settings() -> dict:
         """
@@ -1119,6 +1224,21 @@ if __name__ == "__main__":
     # End config_app() 
 
 
+    def cleanup_chat_files(directory, min_size_bytes=50):
+        """
+        Delete all files in the chats dir smaller than min_size_b bytes.
+        This will clean out "empty" chat files left over from unused
+        sessions.
+        """
+
+        for filename in os.listdir(directory):
+            filepath = os.path.join(directory, filename)
+            if os.path.isfile(filepath):
+                if os.path.getsize(filepath) < min_size_bytes:
+                    os.remove(filepath)
+    # End cleanup_chat_files()
+
+
     # Clear terminal
     os.system('clear')
     print(f"\n[#f5d676 b u]OpenAI Assistant {__version__}[/]\n")
@@ -1138,17 +1258,12 @@ if __name__ == "__main__":
             homedir     = str(Path.home()) + "/"
             CONFIG_DIR  = Path(homedir) / ".openai"
             CONFIG_PATH = CONFIG_DIR / "settings.py"
-            logfile = homedir + ".openai/chat_log.txt"
+            logfile = homedir + f".openai/chats/{tstamp}_chat_log.txt"
 
             # CLI flags
             parser = argparse.ArgumentParser(
                 prog="openai-assistant",
                 description="Terminal client for the OpenAI Assistants API",
-            )
-            parser.add_argument(
-                "--no-upload",
-                action="store_true",
-                help="Do not upload ~/.openai/chat_log.txt on startup",
             )
             parser.add_argument(
                 "--reset-assistant",
@@ -1203,7 +1318,7 @@ if __name__ == "__main__":
 
         print("[green]Connecting to OpenAI API endpoint[/]")
         with c.status(""):
-            sleep(1)
+            #sleep(1)
             # Initialise OpenAI client
             api = Openai_API(settings, logger=api_logger)
             # Log config summary (no secrets)
@@ -1213,18 +1328,9 @@ if __name__ == "__main__":
                 pass
 
 
-        print("[green]Loading configuration and uploading chat log[/]")
+        print("[green]Loading configuration[/]\n")
         # Set up configuration and upload chat_log.txt
-        upload = api.setup(upload_log=(not args.no_upload))  # All CLI prompts and setup happen here
-        status = upload.status.strip()
-        if status == "cancelled":
-            print("\n[yellow]Skipping chat log upload.[/]\n")
-        elif status == "completed":
-            print(f"\nUploaded [#d5d676]{logfile}[/]\n")
-        elif status == "failed":
-            print(f"\nUpload of [red]{logfile}[/] failed!\n")
-        # a little time to read msg
-        sleep(3)
+        api.setup()  # All CLI prompts and setup happen here
 
         # Now launch the TUI, passing the API and settings objects
         app = OpenaiAssistant(api, settings)
@@ -1234,6 +1340,7 @@ if __name__ == "__main__":
 
         app.run()
         lf.close()
+        cleanup_chat_files(CONFIG_DIR / "chats/")
     except Exception as e:
         c.print_exception(f"[red]Caught:[/] {e}")
 # End main
