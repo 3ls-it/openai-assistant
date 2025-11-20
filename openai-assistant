@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import base64
 from datetime import datetime
+from _io import TextIOWrapper
 import logging
 from logging.handlers import TimedRotatingFileHandler
 import os
@@ -92,7 +93,7 @@ class DisplayResponse(Markdown):
 # End Class Response
 
 
-# Widget to display image generation status
+# Widget to display status messages
 class StatusWidget(Static):
     BORDER_TITLE = "Status"
 #
@@ -290,7 +291,6 @@ class ChatFileSelected(Message):
 
 
 class ChatDirectoryTree(DirectoryTree):
-
     #def __init__(self, path, *args, **kwargs):
     #    super().__init__(path, *args, **kwargs)
 
@@ -321,7 +321,7 @@ class ChatDirectoryTree(DirectoryTree):
 
 class ShowChat(Markdown):
     """
-    Encapsulates a Markdown widget for LLM response display
+    Encapsulates a Markdown widget for chat file display
     """
     def __init__(self, text="", border_title="", *args, **kwargs):
         super().__init__(text, *args, **kwargs)
@@ -339,10 +339,10 @@ class ChatBrowser(Screen):
     file_label = Label("[green b]Select File[/]", id="file-label")
     show_chat = ShowChat()
 
+
     def compose(self) -> ComposeResult:
         self.show_chat.visible = True
-        homedir = Path.home()
-        dir_path = homedir / ".openai/chats/"
+        dir_path = Path.home() / ".openai/chats/"
 
         yield Header()
         with Container():
@@ -354,7 +354,7 @@ class ChatBrowser(Screen):
             yield ChatDirectoryTree(dir_path, id="chat-view")
 
 
-    def on_chat_file_selected(self, event: ChatFileSelected) -> None:
+    async def on_chat_file_selected(self, event: ChatFileSelected) -> None:
         """
         Called when the user clicks on a chat file.
         """
@@ -369,8 +369,9 @@ class ChatBrowser(Screen):
             self.file_label.update(f"[blue b]{chat_fname}[/]")
             self.show_chat.update(content) 
         elif meth == "enter":
-            self.app.upload_chat(path)
             self.app.pop_screen()
+            await self.app.continue_chat(path)
+            #self.app.pop_screen()
 # End Class ChatBrowser
 
 
@@ -381,9 +382,10 @@ class EventHandler(AssistantEventHandler):
     to handle the events in the response stream.
     Added text attribute to collect text deltas
     """
-    def __init__(self):
+    def __init__(self, lf):
         # Initialize handler to set up internal state
         super().__init__()
+        self.lf = lf
         # Accumulate streamed text 
         self.text = ''
 
@@ -395,23 +397,23 @@ class EventHandler(AssistantEventHandler):
 
     def on_tool_call_created(self, tool_call):
         try:
-            if lf:
-                lf.write(f'\n> {tool_call.type}\n')
+            if self.lf:
+                self.lf.write(f'\n> {tool_call.type}\n')
         except Exception as e:
             print(f"[red]Log write error in on_tool_call_created():[/] {e}")
         
     # For now we just write the input, output and logs to
-    # ~/.openai/chat_log.txt
+    # ~/.openai/chats/<...>chat_log.txt
     def on_tool_call_delta(self, delta, snapshot):
         try:
             if delta.type == 'code_interpreter':
-                if delta.code_interpreter.input and lf:
-                    lf.write(delta.code_interpreter.input)
-                if delta.code_interpreter.outputs and lf:
-                    lf.write('\n\nOutput >')
+                if delta.code_interpreter.input and self.lf:
+                    self.lf.write(delta.code_interpreter.input)
+                if delta.code_interpreter.outputs and selr.lf:
+                    self.lf.write('\n\nOutput >')
                     for output in delta.code_interpreter.outputs:
                         if output.type == 'logs':
-                            lf.write(f'\n{output.logs}')
+                            self.lf.write(f'\n{output.logs}')
         except Exception as e:
             print(f"[red]Log write error in on_tool_call_delta():[/] {e}")
 # End Class EventHandler
@@ -632,13 +634,7 @@ class Openai_API():
             try:
                 self.logger.warning(f"failed to update assistant resources/instructions: {e}")
             except Exception:
-                pass
-            try:
-                if lf:
-                    lf.write(str(e))
-            except Exception:
-                pass
-            print("[red]Warning:[/] Failed to update assistant tool resources/instructions; proceeding without vector store update.")
+                print("[red]Warning:[/] Failed to update assistant tool resources/instructions; proceeding without vector store update.")
         else:
             if updated_instructions:
                 print("Synced assistant instructions with settings: [#f5d676]YOUR_NAME[/] and [#f5d676]FURTHER_INSTRUCTIONS[/].")
@@ -656,7 +652,7 @@ class Openai_API():
     # End setup() 
 
 
-    def send_query(self, query: str) -> str:
+    def send_query(self, query: str, lf: TextIOWrapper) -> str:
         """
         Creates a query message, submits to the API, streams response
         then returns resp as a string.
@@ -681,7 +677,7 @@ class Openai_API():
             with self.client.beta.threads.runs.stream(
                 thread_id=self.thread.id,
                 assistant_id=self.assistant.id,
-                event_handler=EventHandler(),
+                event_handler=EventHandler(lf),
             ) as stream:
                 stream.until_done()
                 resp = stream.text
@@ -736,11 +732,21 @@ class OpenaiAssistant(App):
         self.your_name = self.config["YOUR_NAME"]
 
 
+    ## Chat log setup
+    now = datetime.now()
+    # Format as e.g. '9 June 2025 9:52pm'
+    tstamp = now.strftime('%-d %B %Y %-I:%M%p')
+    logfile = Path.home() / f".openai/chats/{tstamp}_chat_log.txt"
+    # Open chat log file in append mode
+    lf = open(logfile, 'a', encoding='utf-8')
+    # Write timestamp to log file for session date
+    lf.write(f"\nSession time stamp: {tstamp}\n")
+    lf.flush()
+
+
     TITLE = "OpenAI Assistant"
     SUB_TITLE = f"{__version__}  •  Submit: Ctrl+\\  •  Quit: Ctrl+Q"
     AUTO_FOCUS = "Input_TextArea"
-    #SCREENS = {'chat_browser': ChatBrowser}
-    #chat_browser = ChatBrowser(homedir)
 
     # Key bindings for Footer and help panel 
     BINDINGS = [
@@ -939,9 +945,9 @@ class OpenaiAssistant(App):
         """
         Composes UI elements.
         """
-        path = homedir
+        path = Path.home()
         resp_area = DisplayResponse(
-            f"Hello {self.your_name}, I’m ready to help! Just type your input below.\n\n"
+            f"Hello {self.your_name}! Just type your input below.\n\n"
              "Hints: Submit with `Ctrl+Backslash`, new line with `Enter`, quit with `Ctrl+Q`.\n"
              "Toggle widget focus with `Tab`",
             border_title=self.assistant_name,
@@ -968,8 +974,8 @@ class OpenaiAssistant(App):
             if not text:
                 return
             try:
-                if lf:
-                    lf.write("\nMe:\n"+text+"\n\n")
+                if self.lf:
+                    self.lf.write("\nMe:\n"+text+"\n\n")
             except Exception as e:
                 self.notify(f"[red]Error writing user input to log: {e}",
                             title="Error Saving File!",
@@ -980,11 +986,11 @@ class OpenaiAssistant(App):
             await self.chat_view.mount(
                 DisplayPrompt(text,
                               border_title=self.your_name))
-            resp = await asyncio.to_thread(self.api.send_query, text)
+            resp = await asyncio.to_thread(self.api.send_query, text, self.lf)
             try:
-                if lf:
-                    lf.write("\n"+self.assistant_name+":\n"+resp+"\n\n")
-                    lf.flush()
+                if self.lf:
+                    self.lf.write("\n"+self.assistant_name+":\n"+resp+"\n\n")
+                    self.lf.flush()
             except Exception as e:
                 self.notify(f"[red]Error writing AI response to log: {e}",
                             title="Error Saving File!",
@@ -1010,8 +1016,45 @@ class OpenaiAssistant(App):
         self.push_screen(uploaded)
 
 
-    def upload_chat(self, path) -> None:
-        self.notify(f"Upload {path}")
+    async def continue_chat(self, chpath) -> None:
+        # Create continuation prompt
+        inst = """
+        Here is the previous chat log. Please summarize the key points
+        and continue the conversation from where it left off.
+        """
+        chname = os.path.basename(chpath)
+        self.show_status(f"Loading chat: {chname}")
+
+        with open(chpath, 'r', encoding="utf-8") as f:
+            chat_history = f.read()
+        prompt = f"{inst}\n\nChat log:\n{chat_history}"
+
+        # Close existing log file
+        self.lf.flush()
+        self.lf.close()
+        # Re-open selected chat
+        now = datetime.now()
+        tstamp = now.strftime('%-d %B %Y %-I:%M%p')
+        self.lf = open(chpath, "a", encoding="utf-8")
+        self.lf.write(f"\nContinuing session at: {tstamp}\n\n")
+        self.lf.flush()
+
+        # Send prompt and await response
+        resp = await asyncio.to_thread(self.api.send_query, prompt, self.lf)
+        try:
+            if self.lf:
+                self.lf.write("\n"+self.assistant_name+":\n"+resp+"\n\n")
+                self.lf.flush()
+        except Exception as e:
+            self.notify(f"[red]Error writing AI response to log: {e}",
+                        title="Error Saving File!",
+                        severity="error",
+                        timeout=5)
+        await self.chat_view.mount(
+            DisplayResponse(resp, border_title=self.assistant_name))
+
+        self.show_status("")
+    # End continue_chat
 
 
     def generate_image(self, descr, fname) -> None:
@@ -1248,17 +1291,11 @@ if __name__ == "__main__":
         print("[green]Aquiring settings and configuration[/]")
         with c.status(""):
             sleep(1)
-            # Get current date and time
-            now = datetime.now()
-            # Format as e.g. '9 June 2025 9:52pm'
-            tstamp = now.strftime('%-d %B %Y %-I:%M%p')
 
             ## Some global definitions
-            # Define home directory and config paths
-            homedir     = str(Path.home()) + "/"
-            CONFIG_DIR  = Path(homedir) / ".openai"
+            # Define config paths
+            CONFIG_DIR  = Path.home() / ".openai"
             CONFIG_PATH = CONFIG_DIR / "settings.py"
-            logfile = homedir + f".openai/chats/{tstamp}_chat_log.txt"
 
             # CLI flags
             parser = argparse.ArgumentParser(
@@ -1303,7 +1340,7 @@ if __name__ == "__main__":
             config_app()
 
             # Configure API logger
-            api_logfile = homedir + ".openai/api.log"
+            api_logfile = Path.home() / ".openai/api.log"
             api_logger = logging.getLogger("openai_assistant.api")
             api_logger.setLevel(logging.DEBUG if args.debug_api else logging.INFO)
             handler = TimedRotatingFileHandler(api_logfile, when="midnight", backupCount=7, encoding="utf-8")
@@ -1312,13 +1349,8 @@ if __name__ == "__main__":
                 api_logger.addHandler(handler)
             api_logger.info("startup: settings initialised")
 
-            # Open chat log file in append mode
-            lf = open(logfile, 'a', encoding='utf-8')
-
-
         print("[green]Connecting to OpenAI API endpoint[/]")
         with c.status(""):
-            #sleep(1)
             # Initialise OpenAI client
             api = Openai_API(settings, logger=api_logger)
             # Log config summary (no secrets)
@@ -1327,19 +1359,14 @@ if __name__ == "__main__":
             except Exception:
                 pass
 
-
         print("[green]Loading configuration[/]\n")
         # Set up configuration and upload chat_log.txt
         api.setup()  # All CLI prompts and setup happen here
 
         # Now launch the TUI, passing the API and settings objects
         app = OpenaiAssistant(api, settings)
-
-        # Write timestamp to log file for session date
-        lf.write(f"\nSession time stamp: {tstamp}\n")
-
         app.run()
-        lf.close()
+        app.lf.close()
         cleanup_chat_files(CONFIG_DIR / "chats/")
     except Exception as e:
         c.print_exception(f"[red]Caught:[/] {e}")
