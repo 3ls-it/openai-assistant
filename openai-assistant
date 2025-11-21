@@ -431,7 +431,7 @@ class Openai_API():
         self.config = config
         self.api_key = self.config["OPENAI_API_KEY"]
         self.assistant_name = self.config["ASSISTANT_NAME"]
-        self.your_name = self.config["YOUR_NAME"]
+        self.user_name = self.config["YOUR_NAME"]
         self.gpt_model = self.config["MODEL"]
         self.temp = self.config["TEMP"]
         self.client = OpenAI(api_key=self.api_key)
@@ -553,7 +553,7 @@ class Openai_API():
         ## Assistant setup
         # Compose baseline instructions and append any user-provided
         # additional guidance from settings (FURTHER_INSTRUCTIONS).
-        instructions = f"You are {self.assistant_name}, {self.your_name}'s personal AI assistant."
+        instructions = f"You are {self.assistant_name}, {self.user_name}'s personal AI assistant."
         further = (self.config.get("FURTHER_INSTRUCTIONS") or "").strip()
 
         if further:
@@ -652,6 +652,36 @@ class Openai_API():
     # End setup() 
 
 
+    def generate_image(self, descr: str, fname: str) -> None:
+        """
+        Makes API call to generate image using Responses API.
+        Proof of concept: will be depricated when class is migrated to Responses.
+        """
+        resp = self.client.responses.create(
+            model = self.gpt_model,
+            input = descr,
+            tools=[{"type": "image_generation"}],
+        )
+
+        # Collect image data
+        image_data = [
+            output.result
+            for output in resp.output
+            if output.type == "image_generation_call"
+        ]
+
+        # Save the image to a file
+        if image_data:
+            image_base64 = image_data[0]
+            try:
+                with open(fname, "wb") as f:
+                    f.write(base64.b64decode(image_base64))
+                proc.run(['display', fname])
+            except Exception as e:
+                self.logger.error(f"Saving {fname} failed.\n{e}")
+    # End generate_image()
+
+
     def send_query(self, query: str, lf: TextIOWrapper) -> str:
         """
         Creates a query message, submits to the API, streams response
@@ -729,7 +759,7 @@ class OpenaiAssistant(App):
         self.api = api
         self.config = config
         self.assistant_name = self.config["ASSISTANT_NAME"]
-        self.your_name = self.config["YOUR_NAME"]
+        self.user_name = self.config["YOUR_NAME"]
 
 
     ## Chat log setup
@@ -742,6 +772,9 @@ class OpenaiAssistant(App):
     # Write timestamp to log file for session date
     lf.write(f"\nSession time stamp: {tstamp}\n")
     lf.flush()
+
+    ## Set image directory
+    image_dir = Path.home() / ".openai/images/"
 
 
     TITLE = "OpenAI Assistant"
@@ -947,7 +980,7 @@ class OpenaiAssistant(App):
         """
         path = Path.home()
         resp_area = DisplayResponse(
-            f"Hello {self.your_name}! Just type your input below.\n\n"
+            f"Hello {self.user_name}! Just type your input below.\n\n"
              "Hints: Submit with `Ctrl+Backslash`, new line with `Enter`, quit with `Ctrl+Q`.\n"
              "Toggle widget focus with `Tab`",
             border_title=self.assistant_name,
@@ -978,14 +1011,14 @@ class OpenaiAssistant(App):
                     self.lf.write("\nMe:\n"+text+"\n\n")
             except Exception as e:
                 self.notify(f"[red]Error writing user input to log: {e}",
-                            title="Error Saving File!",
+                            title="Write Error!",
                             severity="error",
                             timeout=5)
 
             self.input_area.load_text("Thinking...")
             await self.chat_view.mount(
                 DisplayPrompt(text,
-                              border_title=self.your_name))
+                              border_title=self.user_name))
             resp = await asyncio.to_thread(self.api.send_query, text, self.lf)
             try:
                 if self.lf:
@@ -993,7 +1026,7 @@ class OpenaiAssistant(App):
                     self.lf.flush()
             except Exception as e:
                 self.notify(f"[red]Error writing AI response to log: {e}",
-                            title="Error Saving File!",
+                            title="Write Error!",
                             severity="error",
                             timeout=5)
             await self.chat_view.mount(
@@ -1003,7 +1036,34 @@ class OpenaiAssistant(App):
     # End on_key() 
 
 
+    def on_directory_tree_file_selected(
+        self, event: DirectoryTree.FileSelected
+    ) -> None:
+        """
+        Called when the user clicks a file in the directory tree.
+        """
+        event.stop()
+        self.path = str(event.path)
+
+        # Called when UploadDialogue is dismissed.
+        def _check_upload(upload: bool | None) -> None:
+            if upload:
+                self.do_file_upload(self.path)
+        # End
+
+        upload_dialogue = UploadDialogue(self.path)
+        self.push_screen(upload_dialogue, _check_upload)
+    # End on_directory_tree_file_selected() 
+
+
+    def watch_show_tree(self, show_tree: bool) -> None:
+        """
+        Called when show_tree is modified.
+        """
+        self.set_class(show_tree, "-show-tree")
     # Status widget helper method
+
+
     def show_status(self, message: str) -> None:
         status = self.query_one("#status", StatusWidget)
         status.update(message)
@@ -1023,6 +1083,7 @@ class OpenaiAssistant(App):
         and continue the conversation from where it left off.
         """
         chname = os.path.basename(chpath)
+        self.input_area.load_text("Thinking...")
         self.show_status(f"Loading chat: {chname}")
 
         with open(chpath, 'r', encoding="utf-8") as f:
@@ -1057,66 +1118,11 @@ class OpenaiAssistant(App):
     # End continue_chat
 
 
-    def generate_image(self, descr, fname) -> None:
-        response = self.api.client.responses.create(
-            model = self.config["MODEL"],
-            input = descr,
-            tools=[{"type": "image_generation"}],
-        )
-
-        # Collect image data
-        image_data = [
-            output.result
-            for output in response.output
-            if output.type == "image_generation_call"
-        ]
-
-        # Save the image to a file
-        if image_data:
-            image_base64 = image_data[0]
-            try:
-                with open(fname, "wb") as f:
-                    f.write(base64.b64decode(image_base64))
-                proc.run(['display', fname])
-            except Exception as e:
-                self.notify(f"Saving {fname} failed.\n{e}",
-                            title="Error Saving File!",
-                            severity="error",
-                            timeout=5)
-    # End generate_image()
-
-
-    def on_directory_tree_file_selected(
-        self, event: DirectoryTree.FileSelected
-    ) -> None:
-        """
-        Called when the user clicks a file in the directory tree.
-        """
-        event.stop()
-        self.path = str(event.path)
-
-        # Called when UploadDialogue is dismissed.
-        def _check_upload(upload: bool | None) -> None:
-            if upload:
-                self.do_file_upload(self.path)
-        # End
-
-        upload_dialogue = UploadDialogue(self.path)
-        self.push_screen(upload_dialogue, _check_upload)
-    # End on_directory_tree_file_selected() 
-
-
-    def watch_show_tree(self, show_tree: bool) -> None:
-        """
-        Called when show_tree is modified.
-        """
-        self.set_class(show_tree, "-show-tree")
-
-
     def action_gen_image(self) -> None:
         loop = asyncio.get_running_loop()
         self._image_future = loop.create_future()
         self.push_screen(ImageDialogue())
+
         # Callback function
         def _on_done(fut: asyncio.Future):
             try:
@@ -1126,29 +1132,33 @@ class OpenaiAssistant(App):
             # Schedule the async function on the event loop
             asyncio.get_running_loop().call_soon_threadsafe(
                     lambda: asyncio.create_task(self._run_gen_image(descr, fname)))
+
         self._image_future.add_done_callback(_on_done)
-    # Helper
-    async def _run_gen_image(self, descr, fname):
+    #
+    # Helper to run generate_image()
+    async def _run_gen_image(self, descr: str, fname: str) -> None:
         if (descr is not None) and (fname is not None):
             loop = asyncio.get_running_loop()
             # Show status
+            self.input_area.load_text("Thinking...")
             self.show_status(f"Generating image {fname}")
             await asyncio.sleep(0)
-            self.api.logger.debug("about to enter try block")
 
             # Run generate_image in a thread pool
             try:
+                image = self.image_dir / fname
                 await loop.run_in_executor(
                         None,  # None = default ThreadPoolExecutor
-                        self.generate_image, descr, fname)
+                        self.api.generate_image, descr, image)
                 self.api.logger.info(f"Image generated: {fname}")
             except Exception as e:
                 self.api.logger.error(f"Image generation failed:\n{e}")
                 self.notify(f"Image generation failed:\n{e}", severity="error", timeout=5)
         else:
-            self.api.logger.error("Did not get values/canceled")
-            self.notify("Did not get values or canceled.", severity="error", timeout=5)
+            self.api.logger.error("Did not get values or cancelled")
+            self.notify("Did not get values or user cancelled.", severity="error", timeout=5)
 
+        self.input_area.load_text("")
         self.show_status("")
     # End action_gen_image() and helper
 
@@ -1183,6 +1193,28 @@ Released under the Two-Clause BSD License\n
 
 
 if __name__ == "__main__":
+    # CLI flags
+    parser = argparse.ArgumentParser(
+        prog="openai-assistant",
+        description="Terminal client for the OpenAI Assistants API",
+    )
+    parser.add_argument(
+        "--reset-assistant",
+        action="store_true",
+        help="Ignore and clear ASSISTANT_ID in settings before startup",
+    )
+    parser.add_argument(
+        "--reset-store",
+        action="store_true",
+        help="Ignore and clear VECTOR_STORE_ID in settings before startup",
+    )
+    parser.add_argument(
+        "--debug-api",
+        action="store_true",
+        help="Enable DEBUG level API logging to ~/.openai/api.log",
+    )
+    args = parser.parse_args()
+
 
     # Helper to load configuration settings
     def load_settings() -> dict:
@@ -1253,7 +1285,7 @@ if __name__ == "__main__":
                 updated = True
 
         # Write settings file if needed
-        if updated or not CONFIG_PATH.exists():
+        if updated or not CONFIG_DIR.exists():
             CONFIG_DIR.mkdir(parents=True, exist_ok=True)
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
                 f.write("# ~/.openai/settings.py  (auto-generated by openai-assistant)\n")
@@ -1264,6 +1296,8 @@ if __name__ == "__main__":
                     else:
                         f.write(f"{key} = {val}\n")
             print(f"Wrote settings to {CONFIG_PATH}")
+            CHATS_DIR.mkdir(parents=True, exist_ok=True)
+            IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     # End config_app() 
 
 
@@ -1294,33 +1328,16 @@ if __name__ == "__main__":
 
             ## Some global definitions
             # Define config paths
+            c.print("setting paths")
             CONFIG_DIR  = Path.home() / ".openai"
             CONFIG_PATH = CONFIG_DIR / "settings.py"
+            CHATS_DIR = CONFIG_DIR / "chats/"
+            IMAGES_DIR = CONFIG_DIR / "images/"
 
-            # CLI flags
-            parser = argparse.ArgumentParser(
-                prog="openai-assistant",
-                description="Terminal client for the OpenAI Assistants API",
-            )
-            parser.add_argument(
-                "--reset-assistant",
-                action="store_true",
-                help="Ignore and clear ASSISTANT_ID in settings before startup",
-            )
-            parser.add_argument(
-                "--reset-store",
-                action="store_true",
-                help="Ignore and clear VECTOR_STORE_ID in settings before startup",
-            )
-            parser.add_argument(
-                "--debug-api",
-                action="store_true",
-                help="Enable DEBUG level API logging to ~/.openai/api.log",
-            )
-            args = parser.parse_args()
-
+            c.print("running config")
             # Get and load  settings, prompt for missing settings
             settings = load_settings()
+            config_app()
 
             # Apply resets if requested
             if args.reset_assistant:
@@ -1337,7 +1354,6 @@ if __name__ == "__main__":
                     print("Reset VECTOR_STORE_ID in settings.")
                 except Exception:
                     pass
-            config_app()
 
             # Configure API logger
             api_logfile = Path.home() / ".openai/api.log"
@@ -1367,7 +1383,7 @@ if __name__ == "__main__":
         app = OpenaiAssistant(api, settings)
         app.run()
         app.lf.close()
-        cleanup_chat_files(CONFIG_DIR / "chats/")
+        cleanup_chat_files(CHATS_DIR)
     except Exception as e:
         c.print_exception(f"[red]Caught:[/] {e}")
 # End main
