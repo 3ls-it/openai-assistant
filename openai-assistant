@@ -4,7 +4,7 @@ openai-assistant v2
 Copyright 2025 J Adams jfa63[at]duck[dot]com
 Released under the 2-Clause BSD license.
 """
-__version__ = 'v2.3.0'
+__version__ = 'v3.0.0-beta'
 __author__ = 'J. Adams jfa63[at]duck[dot]com'
 
 # Builtin imports
@@ -44,7 +44,6 @@ from textual.containers import Container, Grid, VerticalScroll
 from textual.message import Message
 from textual.reactive import reactive, var
 from textual.screen import ModalScreen, Screen
-import textual.widget 
 from textual.widgets import (Button,
                              DirectoryTree,
                              Footer,
@@ -71,6 +70,7 @@ class Input_TextArea(TextArea):
 # End Class Input_TextArea
 
 
+
 # Widget for displaying user input
 class DisplayPrompt(Markdown):
     """
@@ -80,6 +80,7 @@ class DisplayPrompt(Markdown):
         super().__init__(text, *args, **kwargs)
         self.border_title = border_title
 # End Class Prompt 
+
 
 
 # Widget for displaying OpenAI responses 
@@ -93,10 +94,12 @@ class DisplayResponse(Markdown):
 # End Class Response
 
 
+
 # Widget to display status messages
 class StatusWidget(Static):
     BORDER_TITLE = "Status"
 #
+
 
 
 # Modal Screen with quit dialogue  
@@ -122,6 +125,7 @@ class QuitDialogue(ModalScreen):
             self.app.pop_screen()
     # End on_button_pressed() 
 # End Class QuitDialogue
+
 
 
 # Modal Screen with upload dialogue  
@@ -153,6 +157,7 @@ class UploadDialogue(ModalScreen):
 # End Class UploadDialogue
 
 
+
 # Modal Screen with upload result 
 class UploadResult(ModalScreen):
     """
@@ -170,7 +175,6 @@ class UploadResult(ModalScreen):
                 disabled=False,
                 id="dismiss"
                 )
-
 
     def compose(self) -> ComposeResult:
         if self.status == "cancelled":
@@ -192,6 +196,7 @@ class UploadResult(ModalScreen):
             self.app.pop_screen()
     # End on_button_pressed() 
 # End Class UploadResult 
+
 
 
 # Modal Screen for image dialogue  
@@ -248,6 +253,7 @@ class ImageDialogue(ModalScreen):
 # End Class ImageDialogue
 
 
+
 # Modal Screen with arbitrary message 
 class AboutDialogue(ModalScreen):
     """
@@ -282,6 +288,7 @@ class AboutDialogue(ModalScreen):
 # End Class InfoDialogue 
 
 
+
 class ChatFileSelected(Message):
     def __init__(self, sender, path, method):
         super().__init__()
@@ -290,12 +297,10 @@ class ChatFileSelected(Message):
 # End Class ChatFileSelected
 
 
-class ChatDirectoryTree(DirectoryTree):
-    #def __init__(self, path, *args, **kwargs):
-    #    super().__init__(path, *args, **kwargs)
 
+class ChatDirectoryTree(DirectoryTree):
     async def on_directory_tree_file_selected(
-                self, event: DirectoryTree.FileSelected
+                            self, event: DirectoryTree.FileSelected
     ) -> None:
         event.stop()
 
@@ -319,6 +324,7 @@ class ChatDirectoryTree(DirectoryTree):
 # End Class ChatDirectoryTree
 
 
+
 class ShowChat(Markdown):
     """
     Encapsulates a Markdown widget for chat file display
@@ -328,11 +334,15 @@ class ShowChat(Markdown):
 # End Class ShowChat
 
 
+
 class ChatBrowser(Screen):
     """
     Provides the screen for browsing/selecting previous
     chats.
     """
+    def __init__(self, chats_dir, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.dir_path = chats_dir
 
     BINDINGS = [("escape", "app.pop_screen", "Close screen")]
 
@@ -342,7 +352,6 @@ class ChatBrowser(Screen):
 
     def compose(self) -> ComposeResult:
         self.show_chat.visible = True
-        dir_path = Path.home() / ".openai/chats/"
 
         yield Header()
         with Container():
@@ -351,7 +360,7 @@ class ChatBrowser(Screen):
             yield self.file_label
             yield Label("")
             yield self.show_chat
-            yield ChatDirectoryTree(dir_path, id="chat-view")
+            yield ChatDirectoryTree(self.dir_path, id="chat-view")
 
 
     async def on_chat_file_selected(self, event: ChatFileSelected) -> None:
@@ -373,6 +382,7 @@ class ChatBrowser(Screen):
             await self.app.continue_chat(path)
             #self.app.pop_screen()
 # End Class ChatBrowser
+
 
 
 # Extend the EventHandler class 
@@ -409,7 +419,7 @@ class EventHandler(AssistantEventHandler):
             if delta.type == 'code_interpreter':
                 if delta.code_interpreter.input and self.lf:
                     self.lf.write(delta.code_interpreter.input)
-                if delta.code_interpreter.outputs and selr.lf:
+                if delta.code_interpreter.outputs and self.lf:
                     self.lf.write('\n\nOutput >')
                     for output in delta.code_interpreter.outputs:
                         if output.type == 'logs':
@@ -417,6 +427,7 @@ class EventHandler(AssistantEventHandler):
         except Exception as e:
             print(f"[red]Log write error in on_tool_call_delta():[/] {e}")
 # End Class EventHandler
+
 
 
 class Openai_API():
@@ -427,8 +438,9 @@ class Openai_API():
     # We know Assistans API is to be depricated in 2026 
     warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-    def __init__(self, config, logger=None):
+    def __init__(self, config, config_man, logger=None):
         self.config = config
+        self.config_man = config_man
         self.api_key = self.config["OPENAI_API_KEY"]
         self.assistant_name = self.config["ASSISTANT_NAME"]
         self.user_name = self.config["YOUR_NAME"]
@@ -585,7 +597,7 @@ class Openai_API():
 
             resp = input("Save ASSISTANT_ID to config? [Y/n] ").strip().lower()
             if resp in ("", "y", "yes"):
-                write_setting("ASSISTANT_ID", self.assistant.id)
+                self.config_man.write_setting("ASSISTANT_ID", self.assistant.id)
                 print("Updated ASSISTANT_ID in config.")
             else:
                 print("ASSISTANT_ID not saved; will create new next run.")
@@ -609,7 +621,7 @@ class Openai_API():
                 pass
             resp = input("Save VECTOR_STORE_ID to config? [Y/n] ").strip().lower()
             if resp in ("", "y", "yes"):
-                write_setting("VECTOR_STORE_ID", self.vector_store.id)
+                self.config_man.write_setting("VECTOR_STORE_ID", self.vector_store.id)
                 print("Updated VECTOR_STORE_ID in config.")
             else:
                 print("VECTOR_STORE_ID not saved; will create new next run.")
@@ -748,33 +760,31 @@ class Openai_API():
 # End Class Openai_API 
 
 
+
 # App Class -------- #
 class OpenaiAssistant(App):
     """
     Openai-Assistant application class.
     """
 
-    def __init__(self, api, config, *args, **kwargs):
+    def __init__(self, api, config, chats_dir, images_dir, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.api = api
         self.config = config
+        self.chats_dir = chats_dir
+        self.images_dir = images_dir
         self.assistant_name = self.config["ASSISTANT_NAME"]
         self.user_name = self.config["YOUR_NAME"]
-
-
-    ## Chat log setup
-    now = datetime.now()
-    # Format as e.g. '9 June 2025 9:52pm'
-    tstamp = now.strftime('%-d %B %Y %-I:%M%p')
-    logfile = Path.home() / f".openai/chats/{tstamp}_chat_log.txt"
-    # Open chat log file in append mode
-    lf = open(logfile, 'a', encoding='utf-8')
-    # Write timestamp to log file for session date
-    lf.write(f"\nSession time stamp: {tstamp}\n")
-    lf.flush()
-
-    ## Set image directory
-    image_dir = Path.home() / ".openai/images/"
+        ## Chat log setup
+        now = datetime.now()
+        # Format as e.g. '9 June 2025 9:52pm'
+        tstamp = now.strftime('%-d %B %Y %-I:%M%p')
+        self.logfile = self.chats_dir / f"{tstamp}_chat_log.txt"
+        # Open chat log file in append mode
+        self.lf = open(self.logfile, 'a', encoding='utf-8')
+        # Write timestamp to log file for session date
+        self.lf.write(f"\nSession time stamp: {tstamp}\n")
+        self.lf.flush()
 
 
     TITLE = "OpenAI Assistant"
@@ -970,7 +980,7 @@ class OpenaiAssistant(App):
         Sets default theme.
         """
         self.theme = "flexoki"
-        self.install_screen(ChatBrowser(), name='chat_browser')
+        self.install_screen(ChatBrowser(self.chats_dir), name='chat_browser')
     # End on_mount() 
 
 
@@ -1016,9 +1026,9 @@ class OpenaiAssistant(App):
                             timeout=5)
 
             self.input_area.load_text("Thinking...")
+            self.show_status("Sending query")
             await self.chat_view.mount(
-                DisplayPrompt(text,
-                              border_title=self.user_name))
+                DisplayPrompt(text, border_title=self.user_name))
             resp = await asyncio.to_thread(self.api.send_query, text, self.lf)
             try:
                 if self.lf:
@@ -1030,9 +1040,9 @@ class OpenaiAssistant(App):
                             severity="error",
                             timeout=5)
             await self.chat_view.mount(
-                DisplayResponse(resp,
-                                border_title=self.assistant_name))
+                DisplayResponse(resp, border_title=self.assistant_name))
             self.input_area.clear()
+            self.show_status("")
     # End on_key() 
 
 
@@ -1114,6 +1124,7 @@ class OpenaiAssistant(App):
         await self.chat_view.mount(
             DisplayResponse(resp, border_title=self.assistant_name))
 
+        self.input_area.clear()
         self.show_status("")
     # End continue_chat
 
@@ -1146,7 +1157,8 @@ class OpenaiAssistant(App):
 
             # Run generate_image in a thread pool
             try:
-                image = self.image_dir / fname
+                # Create full path
+                image = self.images_dir / fname
                 await loop.run_in_executor(
                         None,  # None = default ThreadPoolExecutor
                         self.api.generate_image, descr, image)
@@ -1192,50 +1204,35 @@ Released under the Two-Clause BSD License\n
 
 
 
-if __name__ == "__main__":
-    # CLI flags
-    parser = argparse.ArgumentParser(
-        prog="openai-assistant",
-        description="Terminal client for the OpenAI Assistants API",
-    )
-    parser.add_argument(
-        "--reset-assistant",
-        action="store_true",
-        help="Ignore and clear ASSISTANT_ID in settings before startup",
-    )
-    parser.add_argument(
-        "--reset-store",
-        action="store_true",
-        help="Ignore and clear VECTOR_STORE_ID in settings before startup",
-    )
-    parser.add_argument(
-        "--debug-api",
-        action="store_true",
-        help="Enable DEBUG level API logging to ~/.openai/api.log",
-    )
-    args = parser.parse_args()
-
+class ConfigManager:
+    """
+    """
+    def __init__(self, config_dir, config_path, chats_dir, images_dir):
+        self.config_dir = config_dir
+        self.config_path = config_path
+        self.chats_dir = chats_dir
+        self.images_dir = images_dir
 
     # Helper to load configuration settings
-    def load_settings() -> dict:
+    def load_settings(self) -> dict:
         """
         Returns a configuration dictionary.
         """
-        if CONFIG_PATH.is_file():
-            return runpy.run_path(str(CONFIG_PATH))
+        if self.config_path.is_file():
+            return runpy.run_path(str(self.config_path))
 
         return {}
     # End load_settings()
 
 
     # Helper to update a single key in ~/.openai/settings.py
-    def write_setting(key: str, val) -> None:
+    def write_setting(self, key: str, val) -> None:
         """
         Writes a single key entry to settings file
         """
         lines = []
         found = False
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        with open(self.config_path, "r", encoding="utf-8") as f:
             for line in f:
                 if line.startswith(f"{key} ="):
                     # overwrite the existing line
@@ -1252,13 +1249,13 @@ if __name__ == "__main__":
                 lines.append(f"{key} = '{val}'\n")
             else:
                 lines.append(f"{key} = {val}\n")
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        with open(self.config_path, "w", encoding="utf-8") as f:
             f.writelines(lines)
     # End write_setting()
 
 
     # Helper to set-up/check initial configuration
-    def config_app() -> None:
+    def config_app(self, settings: dict) -> None:
         """
         Sets up initial run configuration|checks exsisting configuration.
         """
@@ -1285,9 +1282,9 @@ if __name__ == "__main__":
                 updated = True
 
         # Write settings file if needed
-        if updated or not CONFIG_DIR.exists():
-            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        if updated or not self.config_dir.exists():
+            self.config_dir.mkdir(parents=True, exist_ok=True)
+            with open(self.config_path, "w", encoding="utf-8") as f:
                 f.write("# ~/.openai/settings.py  (auto-generated by openai-assistant)\n")
                 for key in REQUIRED + OPTIONAL:
                     val = settings[key]
@@ -1295,96 +1292,124 @@ if __name__ == "__main__":
                         f.write(f"{key} = '{val}'\n")
                     else:
                         f.write(f"{key} = {val}\n")
-            print(f"Wrote settings to {CONFIG_PATH}")
-            CHATS_DIR.mkdir(parents=True, exist_ok=True)
-            IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+            print(f"Wrote settings to {self.config_path}")
+
+        if not self.chats_dir.exists():
+            self.chats_dir.mkdir(parents=True, exist_ok=True)
+
+        if not self.images_dir.exists():
+            self.images_dir.mkdir(parents=True, exist_ok=True)
     # End config_app() 
 
 
-    def cleanup_chat_files(directory, min_size_bytes=50):
+    def cleanup_chat_files(self, min_size_bytes=50):
         """
         Delete all files in the chats dir smaller than min_size_b bytes.
         This will clean out "empty" chat files left over from unused
         sessions.
         """
 
-        for filename in os.listdir(directory):
-            filepath = os.path.join(directory, filename)
+        for filename in os.listdir(self.chats_dir):
+            filepath = os.path.join(self.chats_dir, filename)
             if os.path.isfile(filepath):
                 if os.path.getsize(filepath) < min_size_bytes:
                     os.remove(filepath)
     # End cleanup_chat_files()
+# End class ConfigManager
 
+
+
+def main():
+    c = Console()
+
+    # CLI flags
+    parser = argparse.ArgumentParser(
+        prog="openai-assistant",
+        description="Terminal client for the OpenAI Assistants API",
+    )
+    parser.add_argument(
+        "--reset-assistant",
+        action="store_true",
+        help="Ignore and clear ASSISTANT_ID in settings before startup",
+    )
+    parser.add_argument(
+        "--reset-store",
+        action="store_true",
+        help="Ignore and clear VECTOR_STORE_ID in settings before startup",
+    )
+    parser.add_argument(
+        "--debug-api",
+        action="store_true",
+        help="Enable DEBUG level API logging to ~/.openai/api.log",
+    )
+    args = parser.parse_args()
 
     # Clear terminal
     os.system('clear')
-    print(f"\n[#f5d676 b u]OpenAI Assistant {__version__}[/]\n")
+    c.print(f"\n[#f5d676 b u]OpenAI Assistant {__version__}[/]\n")
 
-    c = Console()
     try:
-        print("[green]Aquiring settings and configuration[/]")
-        with c.status(""):
-            sleep(1)
+        c.print("[green]Aquiring settings and configuration[/]")
+        ## Some global definitions
+        # Define config paths
+        CONFIG_DIR  = Path.home() / ".openai"
+        CONFIG_PATH = CONFIG_DIR / "settings.py"
+        CHATS_DIR = CONFIG_DIR / "chats/"
+        IMAGES_DIR = CONFIG_DIR / "images/"
 
-            ## Some global definitions
-            # Define config paths
-            c.print("setting paths")
-            CONFIG_DIR  = Path.home() / ".openai"
-            CONFIG_PATH = CONFIG_DIR / "settings.py"
-            CHATS_DIR = CONFIG_DIR / "chats/"
-            IMAGES_DIR = CONFIG_DIR / "images/"
+        config_man = ConfigManager(
+                        CONFIG_DIR, CONFIG_PATH, CHATS_DIR, IMAGES_DIR)
+        # Get and load  settings, prompt for missing settings
+        settings = config_man.load_settings()
+        config_man.config_app(settings)
 
-            c.print("running config")
-            # Get and load  settings, prompt for missing settings
-            settings = load_settings()
-            config_app()
-
-            # Apply resets if requested
-            if args.reset_assistant:
-                settings["ASSISTANT_ID"] = ""
-                try:
-                    write_setting("ASSISTANT_ID", "")
-                    print("Reset ASSISTANT_ID in settings.")
-                except Exception:
-                    pass
-            if args.reset_store:
-                settings["VECTOR_STORE_ID"] = ""
-                try:
-                    write_setting("VECTOR_STORE_ID", "")
-                    print("Reset VECTOR_STORE_ID in settings.")
-                except Exception:
-                    pass
-
-            # Configure API logger
-            api_logfile = Path.home() / ".openai/api.log"
-            api_logger = logging.getLogger("openai_assistant.api")
-            api_logger.setLevel(logging.DEBUG if args.debug_api else logging.INFO)
-            handler = TimedRotatingFileHandler(api_logfile, when="midnight", backupCount=7, encoding="utf-8")
-            handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-            if not any(getattr(h, "baseFilename", None) == handler.baseFilename for h in api_logger.handlers):
-                api_logger.addHandler(handler)
-            api_logger.info("startup: settings initialised")
-
-        print("[green]Connecting to OpenAI API endpoint[/]")
-        with c.status(""):
-            # Initialise OpenAI client
-            api = Openai_API(settings, logger=api_logger)
-            # Log config summary (no secrets)
+        # Apply resets if requested
+        if args.reset_assistant:
+            settings["ASSISTANT_ID"] = ""
             try:
-                api_logger.info("config: model="+str(settings.get('MODEL'))+" temp="+str(settings.get('TEMP'))+" assistant_id="+("yes" if settings.get('ASSISTANT_ID') else "no")+" vector_store_id="+("yes" if settings.get('VECTOR_STORE_ID') else "no"))
+                config_man.write_setting("ASSISTANT_ID", "")
+                print("Reset ASSISTANT_ID in settings.")
+            except Exception:
+                pass
+        if args.reset_store:
+            settings["VECTOR_STORE_ID"] = ""
+            try:
+                config_man.write_setting("VECTOR_STORE_ID", "")
+                print("Reset VECTOR_STORE_ID in settings.")
             except Exception:
                 pass
 
-        print("[green]Loading configuration[/]\n")
-        # Set up configuration and upload chat_log.txt
-        api.setup()  # All CLI prompts and setup happen here
+        # Configure API logger
+        api_logfile = CONFIG_DIR / "api.log"
+        api_logger = logging.getLogger("openai_assistant.api")
+        api_logger.setLevel(logging.DEBUG if args.debug_api else logging.INFO)
+        handler = TimedRotatingFileHandler(api_logfile, when="midnight", backupCount=7, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        if not any(getattr(h, "baseFilename", None) == handler.baseFilename for h in api_logger.handlers):
+            api_logger.addHandler(handler)
+        api_logger.info("startup: settings initialised")
 
+        # Create API client and run app
+        c.print("[green]Connecting to OpenAI API endpoint[/]")
+        # Initialise OpenAI client
+        api = Openai_API(settings, config_man, logger=api_logger)
+        # Log config summary
+        try:
+            api_logger.info("config: model="+str(settings.get('MODEL'))+" temp="+str(settings.get('TEMP'))+" assistant_id="+("yes" if settings.get('ASSISTANT_ID') else "no")+" vector_store_id="+("yes" if settings.get('VECTOR_STORE_ID') else "no"))
+        except Exception as e:
+            c.print_exception(f"[red]Caught:[/] {e}")
+
+        c.print("[green]Loading configuration[/]\n")
+        api.setup()
         # Now launch the TUI, passing the API and settings objects
-        app = OpenaiAssistant(api, settings)
+        app = OpenaiAssistant(api, settings, CHATS_DIR, IMAGES_DIR)
         app.run()
         app.lf.close()
-        cleanup_chat_files(CHATS_DIR)
+        config_man.cleanup_chat_files()
     except Exception as e:
         c.print_exception(f"[red]Caught:[/] {e}")
 # End main
 
+
+if __name__ == "__main__":
+    main()
