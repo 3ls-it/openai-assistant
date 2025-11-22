@@ -688,10 +688,15 @@ class Openai_API():
             try:
                 with open(fname, "wb") as f:
                     f.write(base64.b64decode(image_base64))
-                proc.run(['display', fname])
             except Exception as e:
                 self.logger.error(f"Saving {fname} failed.\n{e}")
-    # End generate_image()
+            # Try to display image
+            try:
+                proc.run(['display', fname])
+            except Exception as e:
+                self.logger.info(f"{e}")
+                self.app.notify("Unable to open display")
+# End generate_image()
 
 
     def send_query(self, query: str, lf: TextIOWrapper) -> str:
