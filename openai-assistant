@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-openai-assistant v2
+openai-assistant v3
 Copyright 2025 J Adams jfa63[at]duck[dot]com
 Released under the 2-Clause BSD license.
 """
@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 import runpy
 import subprocess as proc
+import sys
 import time
 from time import sleep
 import warnings
@@ -63,8 +64,6 @@ class Input_TextArea(TextArea):
     """
     Encapsulates a TextArea widget for user input
     """
-    #BORDER_TITLE = "Input"
-
     def _on_submit(self) -> str:
         return self.text
 # End Class Input_TextArea
@@ -199,61 +198,6 @@ class UploadResult(ModalScreen):
 
 
 
-# Modal Screen for image dialogue  
-class ImageDialogue(ModalScreen):
-    """
-    Provides a ModalScreen for image generation dialogue box.
-    """
-    def __init__(self):
-        super().__init__()
-        self.create_button = Button(
-                "Create",
-                variant="primary",
-                compact=True,
-                disabled=False,
-                id="create")
-        self.cancel_button = Button(
-                "Cancel",
-                variant="warning",
-                compact=True,
-                disabled=False,
-                id="cancel")
-    
-    def compose(self):
-        yield Grid(
-            Label("Generate Image", id="message"),
-            Label("Description:"),
-            TextArea(placeholder="Describe image...", id="description_input"),
-            Label("Save as:"),
-            Input(placeholder="Filename", id="filename_input"),
-            self.create_button,
-            self.cancel_button,
-            id="image_dialogue"
-        )
-
-    def on_mount(self):
-        self.set_focus(self.query_one("#description_input", TextArea))
-
-    def on_button_pressed(self, event):
-        descr = self.query_one("#description_input", TextArea).text
-        fname = self.query_one("#filename_input", Input).value
-        fut = getattr(self.app, "_image_future", None)
-
-        if event.button.id == "create":
-            if os.path.exists(fname):
-                self.app.notify(f"File '{fname}' already exists.", severity="warning")
-                # Don't close, let the user correct the filename
-                return
-            if fut and not fut.done():
-                fut.set_result((descr, fname))
-            self.app.pop_screen()
-        elif event.button.id == "cancel":
-            fut.set_result((None, None))
-            self.app.pop_screen()
-# End Class ImageDialogue
-
-
-
 # Modal Screen with arbitrary message 
 class AboutDialogue(ModalScreen):
     """
@@ -271,7 +215,6 @@ class AboutDialogue(ModalScreen):
                 disabled=False,
                 id="dismiss"
                 )
-
 
     def compose(self) -> ComposeResult:
         yield Grid(
@@ -380,53 +323,7 @@ class ChatBrowser(Screen):
         elif meth == "enter":
             self.app.pop_screen()
             await self.app.continue_chat(path)
-            #self.app.pop_screen()
 # End Class ChatBrowser
-
-
-
-# Extend the EventHandler class 
-class EventHandler(AssistantEventHandler):
-    """
-    Extend the EventHandler class overriding two methods
-    to handle the events in the response stream.
-    Added text attribute to collect text deltas
-    """
-    def __init__(self, lf):
-        # Initialize handler to set up internal state
-        super().__init__()
-        self.lf = lf
-        # Accumulate streamed text 
-        self.text = ''
-
-    @override
-    def on_text_delta(self, delta, snapshot):
-        resp = str(delta.value)
-        # Concatenate deltas for display.
-        self.text += resp
-
-    def on_tool_call_created(self, tool_call):
-        try:
-            if self.lf:
-                self.lf.write(f'\n> {tool_call.type}\n')
-        except Exception as e:
-            print(f"[red]Log write error in on_tool_call_created():[/] {e}")
-        
-    # For now we just write the input, output and logs to
-    # ~/.openai/chats/<...>chat_log.txt
-    def on_tool_call_delta(self, delta, snapshot):
-        try:
-            if delta.type == 'code_interpreter':
-                if delta.code_interpreter.input and self.lf:
-                    self.lf.write(delta.code_interpreter.input)
-                if delta.code_interpreter.outputs and self.lf:
-                    self.lf.write('\n\nOutput >')
-                    for output in delta.code_interpreter.outputs:
-                        if output.type == 'logs':
-                            self.lf.write(f'\n{output.logs}')
-        except Exception as e:
-            print(f"[red]Log write error in on_tool_call_delta():[/] {e}")
-# End Class EventHandler
 
 
 
@@ -434,23 +331,153 @@ class Openai_API():
     """
     Encapsulates an OpenAI client instance.
     """
-    # Turn off DepricationWarnings
-    # We know Assistans API is to be depricated in 2026 
-    warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-    def __init__(self, config, config_man, logger=None):
+    def __init__(self, config, logger=None):
         self.config = config
-        self.config_man = config_man
         self.api_key = self.config["OPENAI_API_KEY"]
-        self.assistant_name = self.config["ASSISTANT_NAME"]
-        self.user_name = self.config["YOUR_NAME"]
+        self.prompt_id = self.config["PROMPT_ID"]
         self.gpt_model = self.config["MODEL"]
         self.temp = self.config["TEMP"]
         self.client = OpenAI(api_key=self.api_key)
-        self.assistant = None
         self.logger = logger or logging.getLogger("openai_assistant.api")
-        self.vector_store = None
-        self.thread = None
+        # server-side conversation object backing this chat session
+        self.conversation_id = None
+
+
+
+    def _ensure_conversation(self):
+        """
+        Create a Conversation for this chat session.
+        """
+        if self.conversation_id is not None:
+            return
+
+        conv = self.client.conversations.create(
+            metadata={
+                "app": "openai-assistant",
+                # You could also stash a tab ID, profile name, etc., here
+            }
+            # You *could* also seed initial items here if you want:
+            # items=[
+            #   {
+            #     "type": "message",
+            #     "role": "user",
+            #     "content": "Hello!"
+            #   }
+            # ]
+        )
+        self.conversation_id = conv.id
+        self.logger.info(f"Created conversation {self.conversation_id}")
+
+
+    async def send_query(self, app, messages, lf=None, images_dir=None, display_images=True):
+        """
+        Sends a query to the OpenAI Responses API.
+        - messages: str or list of message dicts (see OpenAI docs)
+        - lf: open file handle for logging (optional)
+        - images_dir: directory to save images (required for image output)
+        - display_images: if True, try to display images with ImageMagick
+        Returns: (text_response, list_of_image_paths)
+        """
+
+        if isinstance(messages, str):
+            messages = [{"role": "user", "content": messages}]
+
+        # Make sure we have a Conversation backing this chat
+        self._ensure_conversation()
+
+        start = time.time()
+
+        try:
+            resp = self.client.responses.create(
+                model=self.gpt_model,
+                input=messages,
+                prompt={
+                    "id": self.prompt_id,
+                },
+                conversation=self.conversation_id,
+                tools=[{"type": "image_generation", "partial_images": 0}],
+            )
+
+            # Fast path: all text in one go
+            text = resp.output_text or ""
+            image_paths = []
+
+            if images_dir:
+                os.makedirs(images_dir, exist_ok=True)
+
+            # Walk the structured outputs for images.
+            for item in resp.output:
+                if item.type == "image_generation_call":
+                    app.show_status("Generating image")
+                    image_base64 = item.result  # base64-encoded PNG/WebP/JPEG
+                    now = datetime.now()
+                    image_fname = f"image_{now:%Y%m%d_%H%M%S_%f}.png"
+                    if images_dir is None:
+                        raise ValueError("images_dir must be specified to save images.")
+                    image_path = os.path.join(images_dir, image_fname)
+
+                    try:
+                        with open(image_path, "wb") as f:
+                            f.write(base64.b64decode(image_base64))
+                        image_paths.append(image_path)
+                    except Exception as e:
+                        self.logger.error(f"Saving {image_fname} failed: {e}")
+                        await app.notify(f"Saving {image_fname} failed")
+
+                    if display_images and image_paths:
+                        try:
+                            # Use ImageMagick 'display' if present
+                            proc.run(['display', image_path], check=True)
+                        except Exception as e:
+                            self.logger.error(f"[system] Unable to display image: {e}")
+                            await app.notify("Unable to open display")
+
+            # Log image names to the chat log, if any
+            if lf and image_paths:
+                for img in image_paths:
+                    lf.write(f"[image] {img}\n")
+                lf.flush()
+
+            try:
+                elapsed = time.time() - start
+                self.logger.info(
+                    f"run completed elapsed={elapsed:.2f}s resp_items={len(resp.output)}"
+                )
+                app.show_status(f"Completed in {elapsed:.2f}s")
+            except Exception:
+                pass
+
+            return text, image_paths
+        # Log errros and notify on screen
+        except openai.APIConnectionError as e:
+            try:
+                self.logger.error(f"APIConnectionError: {e}")
+            except Exception:
+                pass
+            return "The server could not be reached. Check log.", []
+
+        except openai.RateLimitError as e:
+            try:
+                self.logger.error(f"RateLimitError: {e}")
+            except Exception:
+                pass
+            return "A 429 status code was received; we should back off a bit.", []
+
+        except openai.APIStatusError as e:
+            try:
+                self.logger.error(f"APIStatusError: {e}")
+            except Exception:
+                pass
+            return 'A non-200-range status code was received. Check log.', []
+
+        except Exception as e:
+            try:
+                self.logger.error(f"Unexpected error during run: {e}")
+            except Exception:
+                pass
+            return 'An unexpected error occurred while streaming. Check log.', []
+    # End send_query()
 
 
     # Upload file to OpenAI account
@@ -556,212 +583,6 @@ class Openai_API():
                 except Exception:
                     pass
     # End file_upload()
-
-
-    def setup(self) -> None:
-        """
-        Creates Assistant instance and Vector Store.
-        """
-        ## Assistant setup
-        # Compose baseline instructions and append any user-provided
-        # additional guidance from settings (FURTHER_INSTRUCTIONS).
-        instructions = f"You are {self.assistant_name}, {self.user_name}'s personal AI assistant."
-        further = (self.config.get("FURTHER_INSTRUCTIONS") or "").strip()
-
-        if further:
-            instructions = f"{instructions}\n\n{further}"
-
-        if self.config.get("ASSISTANT_ID"):
-            self.assistant = self.client.beta.assistants.retrieve(
-                             assistant_id=self.config["ASSISTANT_ID"])
-            try:
-                self.logger.info(f"assistant retrieved id={self.assistant.id} model={self.gpt_model}")
-            except Exception:
-                pass
-        else:
-            # Prompt for assistant creation
-            print("No ASSISTANT_ID found. Creating new assistant...")
-            self.assistant = self.client.beta.assistants.create(
-                instructions=instructions,
-                name=self.assistant_name,
-                tools=[{"type": "code_interpreter"}, {"type": "file_search"}],
-                model=self.gpt_model,
-                temperature=self.temp
-            )
-            print(f"Created new assistant with ID {self.assistant.id}")
-
-            try:
-                self.logger.info(f"assistant created id={self.assistant.id} model={self.gpt_model}")
-            except Exception:
-                pass
-
-            resp = input("Save ASSISTANT_ID to config? [Y/n] ").strip().lower()
-            if resp in ("", "y", "yes"):
-                self.config_man.write_setting("ASSISTANT_ID", self.assistant.id)
-                print("Updated ASSISTANT_ID in config.")
-            else:
-                print("ASSISTANT_ID not saved; will create new next run.")
-
-        ## Vector Store setup
-        if self.config.get("VECTOR_STORE_ID"):
-            self.vector_store = self.client.vector_stores.retrieve(
-                vector_store_id=self.config["VECTOR_STORE_ID"]
-            )
-            try:
-                self.logger.info(f"vector_store retrieved id={self.vector_store.id}")
-            except Exception:
-                pass
-        else:
-            print("No VECTOR_STORE_ID found. Creating new vector store...")
-            self.vector_store = self.client.vector_stores.create(name="Chat History")
-            print(f"Created new vector store with ID {self.vector_store.id}")
-            try:
-                self.logger.info(f"vector_store created id={self.vector_store.id}")
-            except Exception:
-                pass
-            resp = input("Save VECTOR_STORE_ID to config? [Y/n] ").strip().lower()
-            if resp in ("", "y", "yes"):
-                self.config_man.write_setting("VECTOR_STORE_ID", self.vector_store.id)
-                print("Updated VECTOR_STORE_ID in config.")
-            else:
-                print("VECTOR_STORE_ID not saved; will create new next run.")
-
-        ## Update assistant with vector store and ensure instructions are in-sync
-        update_kwargs = {
-            "assistant_id": self.assistant.id,
-            "tool_resources": {"file_search": {"vector_store_ids": [self.vector_store.id]}},
-        }
-        updated_instructions = False
-        try:
-            if (self.assistant.instructions or "") != instructions:
-                update_kwargs["instructions"] = instructions
-                updated_instructions = True
-        except Exception:
-            update_kwargs["instructions"] = instructions
-            updated_instructions = True
-
-        try:
-            self.assistant = self.client.beta.assistants.update(**update_kwargs)
-        except Exception as e:
-            try:
-                self.logger.warning(f"failed to update assistant resources/instructions: {e}")
-            except Exception:
-                print("[red]Warning:[/] Failed to update assistant tool resources/instructions; proceeding without vector store update.")
-        else:
-            if updated_instructions:
-                print("Synced assistant instructions with settings: [#f5d676]YOUR_NAME[/] and [#f5d676]FURTHER_INSTRUCTIONS[/].")
-                try:
-                    self.logger.info("Assistant instructions synced with settings")
-                except Exception:
-                    pass
-
-        ## Create thread
-        self.thread = self.client.beta.threads.create()
-        try:
-            self.logger.info(f"thread created id={self.thread.id}")
-        except Exception:
-            pass
-    # End setup() 
-
-
-    def generate_image(self, descr: str, fname: str) -> None:
-        """
-        Makes API call to generate image using Responses API.
-        Proof of concept: will be depricated when class is migrated to Responses.
-        """
-        resp = self.client.responses.create(
-            model = self.gpt_model,
-            input = descr,
-            tools=[{"type": "image_generation"}],
-        )
-
-        # Collect image data
-        image_data = [
-            output.result
-            for output in resp.output
-            if output.type == "image_generation_call"
-        ]
-
-        # Save the image to a file
-        if image_data:
-            image_base64 = image_data[0]
-            try:
-                with open(fname, "wb") as f:
-                    f.write(base64.b64decode(image_base64))
-            except Exception as e:
-                self.logger.error(f"Saving {fname} failed.\n{e}")
-            # Try to display image
-            try:
-                proc.run(['display', fname])
-            except Exception as e:
-                self.logger.info(f"{e}")
-                self.app.notify("Unable to open display")
-# End generate_image()
-
-
-    def send_query(self, query: str, lf: TextIOWrapper) -> str:
-        """
-        Creates a query message, submits to the API, streams response
-        then returns resp as a string.
-        """
-        resp = ''
-        try:
-            ## Create a message from the user query.
-            self.client.beta.threads.messages.create(
-                thread_id=self.thread.id,
-                role="user",
-                content=query
-            )
-
-            ## Then, we use the `stream` SDK helper
-            # with the `EventHandler` class to create the Run
-            # and stream the response.
-            try:
-                self.logger.info("run started")
-                start = time.time()
-            except Exception:
-                pass
-            with self.client.beta.threads.runs.stream(
-                thread_id=self.thread.id,
-                assistant_id=self.assistant.id,
-                event_handler=EventHandler(lf),
-            ) as stream:
-                stream.until_done()
-                resp = stream.text
-            try:
-                elapsed = time.time() - start
-                self.logger.info(f"run completed elapsed={elapsed:.2f}s resp_len={len(resp)}")
-            except Exception:
-                pass
-
-        except openai.APIConnectionError as e:
-            try:
-                self.logger.error(f"APIConnectionError: {e}")
-            except Exception:
-                pass
-            return "The server could not be reached. Check log."
-
-        except openai.RateLimitError as e:
-            try:
-                self.logger.error(f"RateLimitError: {e}")
-            except Exception:
-                pass
-            return "A 429 status code was received; we should back off a bit."
-
-        except openai.APIStatusError as e:
-            try:
-                self.logger.error(f"APIStatusError: {e}")
-            except Exception:
-                pass
-            return 'A non-200-range status code was received. Check log.'
-        except Exception as e:
-            try:
-                self.logger.error(f"Unexpected error during run: {e}")
-            except Exception:
-                pass
-            return 'An unexpected error occurred while streaming. Check log.'
-        return resp
-    # End send_query() 
 # End Class Openai_API 
 
 
@@ -772,10 +593,11 @@ class OpenaiAssistant(App):
     Openai-Assistant application class.
     """
 
-    def __init__(self, api, config, chats_dir, images_dir, *args, **kwargs):
+    def __init__(self, api, config, config_dir, chats_dir, images_dir, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.api = api
         self.config = config
+        self.config_dir = config_dir
         self.chats_dir = chats_dir
         self.images_dir = images_dir
         self.assistant_name = self.config["ASSISTANT_NAME"]
@@ -802,8 +624,7 @@ class OpenaiAssistant(App):
         Binding(key="ctrl+q", action="quit", description="Quit"),
         Binding(key="ctrl+b", action="toggle_file_view", description="Toggle File-Upload Browser"),
         Binding(key="f1", action="about", description="About"),
-        Binding("f2", "push_screen('chat_browser')", "Browse Chats"),
-        Binding(key="f3", action="gen_image", description="Generate Image"),
+        Binding("f2", "push_screen('chat_browser')", "Browse/Continue Chats"),
     ]
 
     #Hide file tree on start 
@@ -892,10 +713,6 @@ class OpenaiAssistant(App):
         align: center middle;
     }
 
-    ImageDialogue {
-        align: center middle;
-    }
-
     AboutDialogue {
         align: center middle;
     }
@@ -940,17 +757,6 @@ class OpenaiAssistant(App):
         padding: 0 1;
         width: 50;
         height: 20;
-        border: thick $background 80%;
-        background: $surface;
-    }
-
-    #image_dialogue {
-        grid-size: 1 7;
-        grid-gutter: 1;
-        grid-rows: 1fr 1fr 8fr 1fr 2fr 1fr 1fr;
-        padding: 0 1;
-        width: 60;
-        height: 28;
         border: thick $background 80%;
         background: $surface;
     }
@@ -1018,12 +824,13 @@ class OpenaiAssistant(App):
         then displays returned result.
         """
         if event.key == "ctrl+backslash":
+            self.show_status("")
             text = self.input_area._on_submit()
             if not text:
                 return
             try:
                 if self.lf:
-                    self.lf.write("\nMe:\n"+text+"\n\n")
+                    self.lf.write("\n[user] "+text+"\n\n")
             except Exception as e:
                 self.notify(f"[red]Error writing user input to log: {e}",
                             title="Write Error!",
@@ -1034,10 +841,10 @@ class OpenaiAssistant(App):
             self.show_status("Sending query")
             await self.chat_view.mount(
                 DisplayPrompt(text, border_title=self.user_name))
-            resp = await asyncio.to_thread(self.api.send_query, text, self.lf)
+            resp, image_path = await self.api.send_query(self, text, self.lf, self.images_dir)
             try:
                 if self.lf:
-                    self.lf.write("\n"+self.assistant_name+":\n"+resp+"\n\n")
+                    self.lf.write("\n[assistant] "+resp+"\n\n")
                     self.lf.flush()
             except Exception as e:
                 self.notify(f"[red]Error writing AI response to log: {e}",
@@ -1047,7 +854,6 @@ class OpenaiAssistant(App):
             await self.chat_view.mount(
                 DisplayResponse(resp, border_title=self.assistant_name))
             self.input_area.clear()
-            self.show_status("")
     # End on_key() 
 
 
@@ -1116,7 +922,7 @@ class OpenaiAssistant(App):
         self.lf.flush()
 
         # Send prompt and await response
-        resp = await asyncio.to_thread(self.api.send_query, prompt, self.lf)
+        resp, image_path = await self.api.send_query(self, text, self.lf, self.images_dir)
         try:
             if self.lf:
                 self.lf.write("\n"+self.assistant_name+":\n"+resp+"\n\n")
@@ -1132,52 +938,6 @@ class OpenaiAssistant(App):
         self.input_area.clear()
         self.show_status("")
     # End continue_chat
-
-
-    def action_gen_image(self) -> None:
-        loop = asyncio.get_running_loop()
-        self._image_future = loop.create_future()
-        self.push_screen(ImageDialogue())
-
-        # Callback function
-        def _on_done(fut: asyncio.Future):
-            try:
-                descr, fname = fut.result()
-            except Exception:
-                descr, fname = None, None
-            # Schedule the async function on the event loop
-            asyncio.get_running_loop().call_soon_threadsafe(
-                    lambda: asyncio.create_task(self._run_gen_image(descr, fname)))
-
-        self._image_future.add_done_callback(_on_done)
-    #
-    # Helper to run generate_image()
-    async def _run_gen_image(self, descr: str, fname: str) -> None:
-        if (descr is not None) and (fname is not None):
-            loop = asyncio.get_running_loop()
-            # Show status
-            self.input_area.load_text("Thinking...")
-            self.show_status(f"Generating image {fname}")
-            await asyncio.sleep(0)
-
-            # Run generate_image in a thread pool
-            try:
-                # Create full path
-                image = self.images_dir / fname
-                await loop.run_in_executor(
-                        None,  # None = default ThreadPoolExecutor
-                        self.api.generate_image, descr, image)
-                self.api.logger.info(f"Image generated: {fname}")
-            except Exception as e:
-                self.api.logger.error(f"Image generation failed:\n{e}")
-                self.notify(f"Image generation failed:\n{e}", severity="error", timeout=5)
-        else:
-            self.api.logger.error("Did not get values or cancelled")
-            self.notify("Did not get values or user cancelled.", severity="error", timeout=5)
-
-        self.input_area.load_text("")
-        self.show_status("")
-    # End action_gen_image() and helper
 
 
     def action_toggle_file_view(self) -> None:
@@ -1211,6 +971,7 @@ Released under the Two-Clause BSD License\n
 
 class ConfigManager:
     """
+    Encapsulates configuration management
     """
     def __init__(self, config_dir, config_path, chats_dir, images_dir):
         self.config_dir = config_dir
@@ -1265,9 +1026,8 @@ class ConfigManager:
         Sets up initial run configuration|checks exsisting configuration.
         """
         # Required and optional settings
-        REQUIRED  = ("MODEL", "TEMP", "YOUR_NAME", "ASSISTANT_NAME", "OPENAI_API_KEY")
-        DEFAULTS  = {"MODEL": "gpt-4.1", "TEMP": 0.3, "YOUR_NAME": "User", "ASSISTANT_NAME": "OpenAI"}
-        OPTIONAL  = ("FURTHER_INSTRUCTIONS", "VECTOR_STORE_ID", "ASSISTANT_ID")
+        REQUIRED  = ("MODEL", "TEMP", "YOUR_NAME", "ASSISTANT_NAME", "OPENAI_API_KEY", "PROMPT_ID", "VECTOR_STORE_ID")
+        DEFAULTS  = {"MODEL": "gpt-5.1", "TEMP": 0.3}
 
         # Prompt for missing required settings
         updated  = False
@@ -1280,18 +1040,12 @@ class ConfigManager:
                     settings[key] = input(f"Enter {key}: ").strip()
                 updated = True
 
-        # Ensure optional settings exist
-        for key in OPTIONAL:
-            if key not in settings:
-                settings[key] = ""
-                updated = True
-
         # Write settings file if needed
         if updated or not self.config_dir.exists():
             self.config_dir.mkdir(parents=True, exist_ok=True)
             with open(self.config_path, "w", encoding="utf-8") as f:
-                f.write("# ~/.openai/settings.py  (auto-generated by openai-assistant)\n")
-                for key in REQUIRED + OPTIONAL:
+                f.write("# ~/.openai-assistant/settings.py  (auto-generated by openai-assistant)\n")
+                for key in REQUIRED:
                     val = settings[key]
                     if isinstance(val, str):
                         f.write(f"{key} = '{val}'\n")
@@ -1330,22 +1084,22 @@ def main():
     # CLI flags
     parser = argparse.ArgumentParser(
         prog="openai-assistant",
-        description="Terminal client for the OpenAI Assistants API",
+        description="Terminal client for the OpenAI Requests API",
     )
     parser.add_argument(
-        "--reset-assistant",
+        "--reset-prompt",
         action="store_true",
-        help="Ignore and clear ASSISTANT_ID in settings before startup",
+        help="Ignore and clear PROMPT_ID in settings before startup",
     )
     parser.add_argument(
-        "--reset-store",
+        "--reset-version",
         action="store_true",
-        help="Ignore and clear VECTOR_STORE_ID in settings before startup",
+        help="Ignore and clear PROMPT_VERSION in settings before startup",
     )
     parser.add_argument(
         "--debug-api",
         action="store_true",
-        help="Enable DEBUG level API logging to ~/.openai/api.log",
+        help="Enable DEBUG level API logging to ~/.openai-assistant/api.log",
     )
     args = parser.parse_args()
 
@@ -1355,9 +1109,11 @@ def main():
 
     try:
         c.print("[green]Aquiring settings and configuration[/]")
+        sleep(1)
+
         ## Some global definitions
         # Define config paths
-        CONFIG_DIR  = Path.home() / ".openai"
+        CONFIG_DIR  = Path.home() / ".openai-assistant"
         CONFIG_PATH = CONFIG_DIR / "settings.py"
         CHATS_DIR = CONFIG_DIR / "chats/"
         IMAGES_DIR = CONFIG_DIR / "images/"
@@ -1369,18 +1125,18 @@ def main():
         config_man.config_app(settings)
 
         # Apply resets if requested
-        if args.reset_assistant:
-            settings["ASSISTANT_ID"] = ""
+        if args.reset_prompt:
+            settings["PROMPT_ID"] = ""
             try:
-                config_man.write_setting("ASSISTANT_ID", "")
-                print("Reset ASSISTANT_ID in settings.")
+                config_man.write_setting("PROMPT_ID", "")
+                print("Reset PROMPT_ID in settings.")
             except Exception:
                 pass
-        if args.reset_store:
-            settings["VECTOR_STORE_ID"] = ""
+        if args.reset_version:
+            settings["PROMPT_VERSION"] = ""
             try:
-                config_man.write_setting("VECTOR_STORE_ID", "")
-                print("Reset VECTOR_STORE_ID in settings.")
+                config_man.write_setting("PROMPT_VERSION", "")
+                print("Reset PROMPT_VERSION in settings.")
             except Exception:
                 pass
 
@@ -1396,18 +1152,20 @@ def main():
 
         # Create API client and run app
         c.print("[green]Connecting to OpenAI API endpoint[/]")
+        sleep(1)
         # Initialise OpenAI client
-        api = Openai_API(settings, config_man, logger=api_logger)
+        api = Openai_API(settings, logger=api_logger)
         # Log config summary
         try:
-            api_logger.info("config: model="+str(settings.get('MODEL'))+" temp="+str(settings.get('TEMP'))+" assistant_id="+("yes" if settings.get('ASSISTANT_ID') else "no")+" vector_store_id="+("yes" if settings.get('VECTOR_STORE_ID') else "no"))
+            api_logger.info("config: model="+str(settings.get('MODEL'))+ \
+                    " temp="+str(settings.get('TEMP'))+ \
+                    " prompt_id="+("yes" if settings.get('PROMPT_ID') else "no")+ \
+                    " prompt_version="+("yes" if settings.get('PROMPT_VERSION') else "no"))
         except Exception as e:
             c.print_exception(f"[red]Caught:[/] {e}")
 
-        c.print("[green]Loading configuration[/]\n")
-        api.setup()
         # Now launch the TUI, passing the API and settings objects
-        app = OpenaiAssistant(api, settings, CHATS_DIR, IMAGES_DIR)
+        app = OpenaiAssistant(api, settings, CONFIG_DIR, CHATS_DIR, IMAGES_DIR)
         app.run()
         app.lf.close()
         config_man.cleanup_chat_files()
