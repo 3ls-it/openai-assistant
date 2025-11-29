@@ -4,7 +4,7 @@ openai-assistant v3
 Copyright 2025 J Adams jfa63[at]duck[dot]com
 Released under the 2-Clause BSD license.
 """
-__version__ = 'v3.0.0-beta'
+__version__ = 'v3.0.0'
 __author__ = 'J. Adams jfa63[at]duck[dot]com'
 
 # Builtin imports
@@ -20,6 +20,7 @@ from pathlib import Path
 import runpy
 import subprocess as proc
 import sys
+import threading
 import time
 from time import sleep
 import warnings
@@ -115,14 +116,12 @@ class QuitDialogue(ModalScreen):
             Button("Cancel", variant="primary", compact=True, id="cancel"),
             id="quit_dialogue",
         ) 
-    # End compose() 
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "quit":
             self.app.exit()
         else:
             self.app.pop_screen()
-    # End on_button_pressed() 
 # End Class QuitDialogue
 
 
@@ -145,14 +144,12 @@ class UploadDialogue(ModalScreen):
             Button("Cancel", variant="primary", compact=True, id="cancel"),
             id="upload_dialogue",
         ) 
-    # End compose() 
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel":
             self.dismiss(False)
         elif event.button.id == "upload":
             self.dismiss(True)
-    # End on_button_pressed() 
 # End Class UploadDialogue
 
 
@@ -188,12 +185,10 @@ class UploadResult(ModalScreen):
             self.dismiss_button,
             id="upload_result",
         ) 
-    # End compose() 
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "dismiss":
             self.app.pop_screen()
-    # End on_button_pressed() 
 # End Class UploadResult 
 
 
@@ -222,12 +217,10 @@ class AboutDialogue(ModalScreen):
             self.dismiss_button,
             id="info_dialogue",
         ) 
-    # End compose() 
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "dismiss":
             self.app.pop_screen()
-    # End on_button_pressed() 
 # End Class InfoDialogue 
 
 
@@ -338,14 +331,26 @@ class Openai_API():
         self.prompt_id = self.config["PROMPT_ID"]
         self.gpt_model = self.config["MODEL"]
         self.temp = self.config["TEMP"]
+        self.vector_store_id = self.config["VECTOR_STORE_ID"]
         self.client = OpenAI(api_key=self.api_key)
         self.logger = logger or logging.getLogger("openai_assistant.api")
         # server-side conversation object backing this chat session
         self.conversation_id = None
+        # lock to prevent concurrent operation on conversation
+        self._conversation_lock = threading.Lock()
+        self.vector_store = None
+        ## Vector Store setup        
+        if self.vector_store_id:
+            self.vector_store = self.client.vector_stores.retrieve(
+                 vector_store_id=self.vector_store_id
+            )
+            try:
+                self.logger.info(f"vector_store retrieved id={self.vector_store.id}")
+            except Exception:
+                pass
 
 
-
-    def _ensure_conversation(self):
+    def _ensure_conversation(self) -> None:
         """
         Create a Conversation for this chat session.
         """
@@ -355,28 +360,21 @@ class Openai_API():
         conv = self.client.conversations.create(
             metadata={
                 "app": "openai-assistant",
-                # You could also stash a tab ID, profile name, etc., here
             }
-            # You *could* also seed initial items here if you want:
-            # items=[
-            #   {
-            #     "type": "message",
-            #     "role": "user",
-            #     "content": "Hello!"
-            #   }
-            # ]
         )
+
         self.conversation_id = conv.id
         self.logger.info(f"Created conversation {self.conversation_id}")
 
 
-    async def send_query(self, app, messages, lf=None, images_dir=None, display_images=True):
+    def send_query(self, messages, lf=None,
+                   images_dir=None, display_images=True) -> tuple[str, list[str]]:
         """
         Sends a query to the OpenAI Responses API.
         - messages: str or list of message dicts (see OpenAI docs)
         - lf: open file handle for logging (optional)
         - images_dir: directory to save images (required for image output)
-        - display_images: if True, try to display images with ImageMagick
+        - display_images: if True, try to display images with `feh`
         Returns: (text_response, list_of_image_paths)
         """
 
@@ -388,18 +386,51 @@ class Openai_API():
 
         start = time.time()
 
-        try:
-            resp = self.client.responses.create(
-                model=self.gpt_model,
-                input=messages,
-                prompt={
-                    "id": self.prompt_id,
-                },
-                conversation=self.conversation_id,
-                tools=[{"type": "image_generation", "partial_images": 0}],
-            )
+        # small retry loop for conversation_locked
+        max_retries = 3
+        backoff = 1.0  # seconds
 
-            # Fast path: all text in one go
+        try:
+            for attempt in range(1, max_retries + 1):
+                try:
+                    with self._conversation_lock:
+                        resp = self.client.responses.create(
+                            temperature=self.temp,
+                            model=self.gpt_model,
+                            input=messages,
+                            prompt={
+                                "id": self.prompt_id
+                            },
+                            conversation=self.conversation_id,
+                            tools=[{"type": "image_generation", "partial_images": 0}],
+                        )
+                    break  # success, exit retry loop
+
+                except openai.APIStatusError as e:
+                    # Check specifically for conversation_locked
+                    msg = str(e)
+                    cond1 = "conversation_locked"
+                    cond2 = "Another process is currently operating on this conversation"
+                    if cond1 in msg or cond2 in msg:
+                        try:
+                            self.logger.warning(
+                                "conversation_locked for conversation %s (attempt %d/%d); retrying in %.1fs",
+                                self.conversation_id,
+                                attempt,
+                                max_retries,
+                                backoff,
+                            )
+                        except Exception:
+                            pass
+                        if attempt == max_retries:
+                            # Give up after max_retries; re-raise to fall through to your generic handler
+                            raise
+                        time.sleep(backoff)
+                        continue
+                    # Not a conversation_locked error: re-raise and let outer except handle it
+                    raise
+            # end retry loop
+
             text = resp.output_text or ""
             image_paths = []
 
@@ -409,7 +440,6 @@ class Openai_API():
             # Walk the structured outputs for images.
             for item in resp.output:
                 if item.type == "image_generation_call":
-                    app.show_status("Generating image")
                     image_base64 = item.result  # base64-encoded PNG/WebP/JPEG
                     now = datetime.now()
                     image_fname = f"image_{now:%Y%m%d_%H%M%S_%f}.png"
@@ -423,15 +453,6 @@ class Openai_API():
                         image_paths.append(image_path)
                     except Exception as e:
                         self.logger.error(f"Saving {image_fname} failed: {e}")
-                        await app.notify(f"Saving {image_fname} failed")
-
-                    if display_images and image_paths:
-                        try:
-                            # Use ImageMagick 'display' if present
-                            proc.run(['display', image_path], check=True)
-                        except Exception as e:
-                            self.logger.error(f"[system] Unable to display image: {e}")
-                            await app.notify("Unable to open display")
 
             # Log image names to the chat log, if any
             if lf and image_paths:
@@ -439,16 +460,25 @@ class Openai_API():
                     lf.write(f"[image] {img}\n")
                 lf.flush()
 
+            # Display images, if any
+            if display_images and image_paths:
+                for img in image_paths:
+                    try:
+                        # Use 'feh' if present
+                        proc.Popen(['feh', img])
+                    except Exception as e:
+                        self.logger.error(f"[system] Unable to display image: {e}")
+
             try:
                 elapsed = time.time() - start
                 self.logger.info(
                     f"run completed elapsed={elapsed:.2f}s resp_items={len(resp.output)}"
                 )
-                app.show_status(f"Completed in {elapsed:.2f}s")
             except Exception:
                 pass
 
             return text, image_paths
+
         # Log errros and notify on screen
         except openai.APIConnectionError as e:
             try:
@@ -473,7 +503,7 @@ class Openai_API():
 
         except Exception as e:
             try:
-                self.logger.error(f"Unexpected error during run: {e}")
+                self.logger.exception(f"Unexpected error during run: {e}")
             except Exception:
                 pass
             return 'An unexpected error occurred while streaming. Check log.', []
@@ -593,25 +623,42 @@ class OpenaiAssistant(App):
     Openai-Assistant application class.
     """
 
-    def __init__(self, api, config, config_dir, chats_dir, images_dir, *args, **kwargs):
+    def __init__(self, config, config_dir, chats_dir,
+                        images_dir, api_logger, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.api = api
         self.config = config
         self.config_dir = config_dir
         self.chats_dir = chats_dir
         self.images_dir = images_dir
+
         self.assistant_name = self.config["ASSISTANT_NAME"]
         self.user_name = self.config["YOUR_NAME"]
-        ## Chat log setup
+
+        # Create API instance
+        self.api_logger = api_logger
+        self.api = Openai_API(self.config, logger=self.api_logger)
+
+        try:
+            self.api_logger.info("config: model="+str(self.config.get('MODEL'))+ \
+                " temp="+str(self.config.get('TEMP'))+ \
+                " prompt_id="+("yes" if self.config.get('PROMPT_ID') else "no")+ \
+                " vector_store_id="+("yes" if self.config.get('VECTOR_STORE_ID') else "no")
+            )
+        except Exception:
+            pass
+
+        # Chat log setup
         now = datetime.now()
         # Format as e.g. '9 June 2025 9:52pm'
         tstamp = now.strftime('%-d %B %Y %-I:%M%p')
         self.logfile = self.chats_dir / f"{tstamp}_chat_log.txt"
+
         # Open chat log file in append mode
         self.lf = open(self.logfile, 'a', encoding='utf-8')
         # Write timestamp to log file for session date
         self.lf.write(f"\nSession time stamp: {tstamp}\n")
         self.lf.flush()
+    # End constructor
 
 
     TITLE = "OpenAI Assistant"
@@ -792,7 +839,6 @@ class OpenaiAssistant(App):
         """
         self.theme = "flexoki"
         self.install_screen(ChatBrowser(self.chats_dir), name='chat_browser')
-    # End on_mount() 
 
 
     def compose(self) -> ComposeResult:
@@ -814,7 +860,6 @@ class OpenaiAssistant(App):
             yield StatusWidget("", id="status")
             yield DirectoryTree(path, id="tree-view")
         yield Footer()
-    # End compose() 
 
 
     @on(events.Key)
@@ -841,19 +886,32 @@ class OpenaiAssistant(App):
             self.show_status("Sending query")
             await self.chat_view.mount(
                 DisplayPrompt(text, border_title=self.user_name))
-            resp, image_path = await self.api.send_query(self, text, self.lf, self.images_dir)
-            try:
-                if self.lf:
-                    self.lf.write("\n[assistant] "+resp+"\n\n")
-                    self.lf.flush()
-            except Exception as e:
-                self.notify(f"[red]Error writing AI response to log: {e}",
-                            title="Write Error!",
-                            severity="error",
-                            timeout=5)
-            await self.chat_view.mount(
-                DisplayResponse(resp, border_title=self.assistant_name))
+
+            start = time.time()
+            resp, image_path = await asyncio.to_thread(
+                    self.api.send_query, text, self.lf, self.images_dir)
+            elapsed = time.time() - start
+
+            has_text = bool(resp and resp.strip())
+            if has_text:
+                try:
+                    if self.lf:
+                        self.lf.write("\n[assistant] " + resp + "\n\n")
+                        self.lf.flush()
+                except Exception as e:
+                    self.notify(
+                        f"[red]Error writing AI response to log: {e}",
+                        title="Error Saving File!",
+                        severity="error",
+                        timeout=5,
+                    )
+
+                await self.chat_view.mount(
+                    DisplayResponse(resp, border_title=self.assistant_name)
+                )
+
             self.input_area.clear()
+            self.show_status(f"Run completed in {elapsed:.2f}s")
     # End on_key() 
 
 
@@ -874,7 +932,6 @@ class OpenaiAssistant(App):
 
         upload_dialogue = UploadDialogue(self.path)
         self.push_screen(upload_dialogue, _check_upload)
-    # End on_directory_tree_file_selected() 
 
 
     def watch_show_tree(self, show_tree: bool) -> None:
@@ -882,9 +939,9 @@ class OpenaiAssistant(App):
         Called when show_tree is modified.
         """
         self.set_class(show_tree, "-show-tree")
+
+
     # Status widget helper method
-
-
     def show_status(self, message: str) -> None:
         status = self.query_one("#status", StatusWidget)
         status.update(message)
@@ -900,7 +957,7 @@ class OpenaiAssistant(App):
     async def continue_chat(self, chpath) -> None:
         # Create continuation prompt
         inst = """
-        Here is the previous chat log. Please summarize the key points
+        Here is a previous chat log. Please summarize the key points
         and continue the conversation from where it left off.
         """
         chname = os.path.basename(chpath)
@@ -922,21 +979,31 @@ class OpenaiAssistant(App):
         self.lf.flush()
 
         # Send prompt and await response
-        resp, image_path = await self.api.send_query(self, text, self.lf, self.images_dir)
-        try:
-            if self.lf:
-                self.lf.write("\n"+self.assistant_name+":\n"+resp+"\n\n")
-                self.lf.flush()
-        except Exception as e:
-            self.notify(f"[red]Error writing AI response to log: {e}",
-                        title="Error Saving File!",
-                        severity="error",
-                        timeout=5)
-        await self.chat_view.mount(
-            DisplayResponse(resp, border_title=self.assistant_name))
+        start = time.time()
+        resp, _ = await asyncio.to_thread(
+                self.api.send_query, prompt, self.lf, self.images_dir)
+        elapsed = time.time() - start
+
+        has_text = bool(resp and resp.strip())
+        if has_text:
+            try:
+                if self.lf:
+                    self.lf.write("\n[assistant] " + resp + "\n\n")
+                    self.lf.flush()
+            except Exception as e:
+                self.notify(
+                    f"[red]Error writing AI response to log: {e}",
+                    title="Error Saving File!",
+                    severity="error",
+                    timeout=5,
+                )
+
+            await self.chat_view.mount(
+                DisplayResponse(resp, border_title=self.assistant_name)
+            )
 
         self.input_area.clear()
-        self.show_status("")
+        self.show_status(f"Run completed in {elapsed:.2f}s")
     # End continue_chat
 
 
@@ -1058,7 +1125,6 @@ class ConfigManager:
 
         if not self.images_dir.exists():
             self.images_dir.mkdir(parents=True, exist_ok=True)
-    # End config_app() 
 
 
     def cleanup_chat_files(self, min_size_bytes=50):
@@ -1073,9 +1139,7 @@ class ConfigManager:
             if os.path.isfile(filepath):
                 if os.path.getsize(filepath) < min_size_bytes:
                     os.remove(filepath)
-    # End cleanup_chat_files()
 # End class ConfigManager
-
 
 
 def main():
@@ -1090,11 +1154,6 @@ def main():
         "--reset-prompt",
         action="store_true",
         help="Ignore and clear PROMPT_ID in settings before startup",
-    )
-    parser.add_argument(
-        "--reset-version",
-        action="store_true",
-        help="Ignore and clear PROMPT_VERSION in settings before startup",
     )
     parser.add_argument(
         "--debug-api",
@@ -1112,15 +1171,14 @@ def main():
         sleep(1)
 
         ## Some global definitions
-        # Define config paths
         CONFIG_DIR  = Path.home() / ".openai-assistant"
         CONFIG_PATH = CONFIG_DIR / "settings.py"
-        CHATS_DIR = CONFIG_DIR / "chats/"
-        IMAGES_DIR = CONFIG_DIR / "images/"
+        CHATS_DIR   = CONFIG_DIR / "chats/"
+        IMAGES_DIR  = CONFIG_DIR / "images/"
 
-        config_man = ConfigManager(
-                        CONFIG_DIR, CONFIG_PATH, CHATS_DIR, IMAGES_DIR)
-        # Get and load  settings, prompt for missing settings
+        config_man = ConfigManager(CONFIG_DIR, CONFIG_PATH, CHATS_DIR, IMAGES_DIR)
+
+        # Get and load settings, prompt for missing settings
         settings = config_man.load_settings()
         config_man.config_app(settings)
 
@@ -1132,43 +1190,48 @@ def main():
                 print("Reset PROMPT_ID in settings.")
             except Exception:
                 pass
-        if args.reset_version:
-            settings["PROMPT_VERSION"] = ""
-            try:
-                config_man.write_setting("PROMPT_VERSION", "")
-                print("Reset PROMPT_VERSION in settings.")
-            except Exception:
-                pass
 
         # Configure API logger
         api_logfile = CONFIG_DIR / "api.log"
         api_logger = logging.getLogger("openai_assistant.api")
         api_logger.setLevel(logging.DEBUG if args.debug_api else logging.INFO)
-        handler = TimedRotatingFileHandler(api_logfile, when="midnight", backupCount=7, encoding="utf-8")
-        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-        if not any(getattr(h, "baseFilename", None) == handler.baseFilename for h in api_logger.handlers):
+        handler = TimedRotatingFileHandler(
+            api_logfile,
+            when="midnight",
+            backupCount=7,
+            encoding="utf-8",
+        )
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+        )
+        if not any(
+            getattr(h, "baseFilename", None) == handler.baseFilename
+            for h in api_logger.handlers
+        ):
             api_logger.addHandler(handler)
         api_logger.info("startup: settings initialised")
 
-        # Create API client and run app
         c.print("[green]Connecting to OpenAI API endpoint[/]")
         sleep(1)
-        # Initialise OpenAI client
-        api = Openai_API(settings, logger=api_logger)
-        # Log config summary
-        try:
-            api_logger.info("config: model="+str(settings.get('MODEL'))+ \
-                    " temp="+str(settings.get('TEMP'))+ \
-                    " prompt_id="+("yes" if settings.get('PROMPT_ID') else "no")+ \
-                    " prompt_version="+("yes" if settings.get('PROMPT_VERSION') else "no"))
-        except Exception as e:
-            c.print_exception(f"[red]Caught:[/] {e}")
 
-        # Now launch the TUI, passing the API and settings objects
-        app = OpenaiAssistant(api, settings, CONFIG_DIR, CHATS_DIR, IMAGES_DIR)
-        app.run()
-        app.lf.close()
-        config_man.cleanup_chat_files()
+        # Launch the TUI
+        app = OpenaiAssistant(
+                settings, CONFIG_DIR, CHATS_DIR, IMAGES_DIR, api_logger
+        )
+
+        try:
+            app.run()
+        finally:
+            try:
+                if getattr(app, "lf", None):
+                    app.lf.close()
+            except Exception:
+                pass
+            try:
+                config_man.cleanup_chat_files()
+            except Exception:
+                pass
+
     except Exception as e:
         c.print_exception(f"[red]Caught:[/] {e}")
 # End main
