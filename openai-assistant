@@ -395,7 +395,6 @@ class Openai_API():
                 try:
                     with self._conversation_lock:
                         resp = self.client.responses.create(
-                            temperature=self.temp,
                             model=self.gpt_model,
                             input=messages,
                             prompt={
