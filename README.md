@@ -86,11 +86,7 @@ J Adams jfa63[at]duck[dot]com Nov 2025
     
    Flags:
    - `--debug-api` — enable DEBUG-level API logging for more verbose diagnostics
-  
-<img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-01.png" alt="Screenshot 1" resize="400">  
-  
-<img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-02.png" alt="Screenshot 2" resize="400">  
-  
+    
 3. Chat  
    • Multi-line input is supported (press **Enter** for a new line).  
    • Submit your message with **ctrl+backslash**.  
