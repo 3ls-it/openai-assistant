@@ -70,7 +70,7 @@ J Adams jfa63[at]duck[dot]com Nov 2025
    You will also need to have the `feh` image program installed. Follow your operating system's method for package installation.  
 
 2. Configure & Run  
-   In the release directory, simply invoke the program; on first run it will auto-generate `~/.openai-assistant/settings.py` and prompt for required values.
+   In the release directory, simply invoke the program; on first run it will auto-generate `~/.openai-assistant/settings.py` and prompt for required values. (Optionaly copy `openai-assistant` to a location in your `PATH`, e.g., `~/bin/`, `~/.local/bin/`, etc.  
    ```bash
    chmod 750 openai-assistant
    ./openai-assistant
