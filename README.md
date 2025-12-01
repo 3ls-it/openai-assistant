@@ -5,8 +5,6 @@
   This is a terminal-based OpenAI Assistant client, which as of v2.0.0-beta uses the Textual UI. As of v3.0.0, the Requests API is used, and GPT-5.1 is the default model. (Model choice is configurable in the `settings.py` file.) The current version also supports file uploading and image generation.  
   I put this together for personal use as I do most of my work in the shell. It is meant to be a general-purpose AI assistant for those of us who work in the terminal.  
   
-<img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-08.png" alt="Screenshot 8, new opening dialogue." resize="400">
-   
   It was developed and is used on Unix-like systems with no
 consideration for that Other OS, though it should work on
 any Unix-like platform.  
@@ -93,12 +91,14 @@ J Adams jfa63[at]duck[dot]com Nov 2025
    • User input and responses are rendered as Markdown in the TUI.  
    • Quit session with **ctrl+q**  
    
-<img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-04.png" alt="Screenshot 4" resize="400">  
+<img src="https://github.com/3ls-it/images/blob/main/assistant_v3_01.png" alt="Screenshot 1" resize="400">  
     
-<img src="https://github.com/3ls-it/images/blob/main/ai-assistant_screen-05.png" alt="Screenshot 5" resize="400">  
+<img src="https://github.com/3ls-it/images/blob/main/assistant_v3_02.png" alt="Screenshot 2" resize="400">  
    
 4. Chat Continuation  
    • Select "Browse/Continue Chats" (F2) to browse past chat logs and continue the conversation   
+   
+<img src="https://github.com/3ls-it/images/blob/main/assistant_v3_03.png" alt="Screenshot 3" resize="400">  
         
 5. Image Generation  
    • Generate images by entering description. Images are downloaded to `~/.openai-assistant/images/` and opened automatically with `feh`  

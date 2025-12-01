@@ -4,7 +4,7 @@ openai-assistant v3
 Copyright 2025 J Adams jfa63[at]duck[dot]com
 Released under the 2-Clause BSD license.
 """
-__version__ = 'v3.0.0'
+__version__ = 'v3.0.1'
 __author__ = 'J. Adams jfa63[at]duck[dot]com'
 
 # Builtin imports
@@ -12,27 +12,21 @@ import argparse
 import asyncio
 import base64
 from datetime import datetime
-from _io import TextIOWrapper
 import logging
 from logging.handlers import TimedRotatingFileHandler
 import os
 from pathlib import Path
 import runpy
 import subprocess as proc
-import sys
 import threading
 import time
 from time import sleep
-import warnings
+#import warnings
 
 # OpenAI imports
 import openai
-from openai import AssistantEventHandler
 from openai import OpenAI
 from openai.types.vector_stores.vector_store_file_batch import VectorStoreFileBatch
-
-# Importing overide for EventHandler
-from typing_extensions import override
 
 # Rich imports for text output formatting
 from rich.console import Console
@@ -50,7 +44,6 @@ from textual.widgets import (Button,
                              DirectoryTree,
                              Footer,
                              Header,
-                             Input,
                              Label,
                              Markdown,
                              Static,
@@ -650,7 +643,9 @@ class OpenaiAssistant(App):
         now = datetime.now()
         # Format as e.g. '9 June 2025 9:52pm'
         tstamp = now.strftime('%-d %B %Y %-I:%M%p')
-        self.logfile = self.chats_dir / f"{tstamp}_chat_log.txt"
+        # No spaces in filename
+        stamp = tstamp.replace(" ", "_")
+        self.logfile = self.chats_dir / f"{stamp}-chat_log.txt"
 
         # Open chat log file in append mode
         self.lf = open(self.logfile, 'a', encoding='utf-8')
