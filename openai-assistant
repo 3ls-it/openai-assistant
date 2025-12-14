@@ -4,7 +4,7 @@ openai-assistant v3
 Copyright 2025 J Adams jfa63[at]duck[dot]com
 Released under the 2-Clause BSD license.
 """
-__version__ = 'v3.0.1'
+__version__ = 'v3.0.2'
 __author__ = 'J. Adams jfa63[at]duck[dot]com'
 
 # Builtin imports
@@ -16,14 +16,18 @@ import logging
 from logging.handlers import TimedRotatingFileHandler
 import os
 from pathlib import Path
+import re
 import runpy
 import subprocess as proc
 import sys
+import textwrap
 import threading
 import time
 from time import sleep
-from typing import Any
-#import warnings
+from typing import Any, Match
+
+# PyLaTeX
+from pylatexenc.latex2text import LatexNodes2Text
 
 # OpenAI imports
 import openai
@@ -51,6 +55,56 @@ from textual.widgets import (Button,
                              Static,
                              TextArea,
                             )
+
+
+
+## Global functions -------- #
+# Convert LaTeX expressions to Unicode.
+# Multiline \[ ... \] where \[ and \] are line-based (common).
+# Allow mismatched indentation on closing delimiters.
+# Also handle inline math \( ... \).
+_LATEX2TEXT = LatexNodes2Text()
+
+_DISPLAY_MATH_BLOCK = re.compile(
+    r"^(?P<indent>[ \t]*)\\\[\s*\n(?P<body>.*?)\n[ \t]*\\\]\s*$",
+    re.DOTALL | re.MULTILINE,
+)
+
+_INLINE_MATH_PARENS = re.compile(
+    r"\\\(\s*(?P<body>.+?)\s*\\\)",
+    re.DOTALL,
+)
+
+def _latex_to_pretty(latex: str) -> str:
+    latex = textwrap.dedent(latex).strip()
+    try:
+        return _LATEX2TEXT.latex_to_text(latex).strip()
+    except Exception:
+        # fail-open: keep original latex
+        return latex
+
+def _fence(indent: str, text: str) -> str:
+    lines = ["```", text, "```"]
+    return "\n".join(indent + line for line in lines)
+
+def normalize_math_for_markdown(text: str) -> str:
+    # Pass A: display math blocks
+    def repl_display(m: Match[str]) -> str:
+        indent = m.group("indent")
+        pretty = _latex_to_pretty(m.group("body"))
+        return _fence(indent, pretty)
+
+    text = _DISPLAY_MATH_BLOCK.sub(repl_display, text)
+
+    # Pass B: inline math via \( ... \)
+    def repl_inline(m: Match[str]) -> str:
+        pretty = _latex_to_pretty(m.group("body"))
+        pretty = " ".join(pretty.splitlines()).strip()  # keep inline
+        return f"`{pretty}`"
+
+    text = _INLINE_MATH_PARENS.sub(repl_inline, text)
+    return text
+##
 
 
 
@@ -84,6 +138,7 @@ class DisplayResponse(Markdown):
     Encapsulates a Markdown widget for LLM response display
     """
     def __init__(self, text, border_title="", *args, **kwargs):
+        text = normalize_math_for_markdown(text)
         super().__init__(text, *args, **kwargs)
         self.border_title = border_title
 # End Class Response
@@ -106,7 +161,7 @@ class QuitDialogue(ModalScreen):
 
     def compose(self) -> ComposeResult:
         yield Grid(
-            Label("Are you sure you want to quit?", id="message"),
+            Label(f"[#f5d676 b]Are you sure you want to quit?[/]", id="message"),
             Button("Quit", variant="warning", compact=True, id="quit"),
             Button("Cancel", variant="primary", compact=True, id="cancel"),
             id="quit_dialogue",
@@ -134,7 +189,7 @@ class UploadDialogue(ModalScreen):
 
     def compose(self) -> ComposeResult:
         yield Grid(
-            Label(f"Upload {self.fname}?", id="message"),
+            Label(f"[#f5d676 b]Upload {self.fname}?[/]", id="message"),
             Button("Upload", variant="success", compact=True, id="upload"),
             Button("Cancel", variant="primary", compact=True, id="cancel"),
             id="upload_dialogue",
@@ -169,7 +224,7 @@ class UploadResult(ModalScreen):
 
     def compose(self) -> ComposeResult:
         if self.status == "cancelled":
-            msg = f"[yellowUpload of {self.path}[/] cancelled"
+            msg = f"[yellow]Upload of {self.path}[/] cancelled"
         elif self.status == "completed":
             msg = f"[green]Uploaded {self.path}[/]"
         elif self.status == "failed":
@@ -216,7 +271,7 @@ class AboutDialogue(ModalScreen):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "dismiss":
             self.app.pop_screen()
-# End Class InfoDialogue 
+# End Class AboutDialogue 
 
 
 
@@ -305,13 +360,67 @@ class ChatBrowser(Screen):
         
         if meth == "left-click":
             with open(path, "rt") as f:
-               content = f.read() 
+               text = f.read() 
             self.file_label.update(f"[blue b]{chat_fname}[/]")
+            # Convert LaTeX to Unicode
+            content = normalize_math_for_markdown(text)
             self.show_chat.update(content) 
         elif meth == "enter":
             self.app.pop_screen()
             await self.app.continue_chat(path)
 # End Class ChatBrowser
+
+
+
+class ContinuationDialogue(ModalScreen):
+    """
+    Provides a ModalScreen for for chat continuation dialogue.
+    Allows user to add instructions to the contiuation prompt.
+    """
+
+    def __init__(self):
+        super().__init__()
+
+        self.create_button = Button(
+                "Continue",
+                variant="primary",
+                compact=True,
+                disabled=False,
+                id="continue")
+        self.cancel_button = Button(
+                "Cancel",
+                variant="warning",
+                compact=True,
+                disabled=False,
+                id="cancel")
+        self.input_area = TextArea(
+                placeholder="Further instructions...",
+                id="instruction_input")
+
+
+    def compose(self):
+        yield Grid(
+            Label(f"[#f5d676 b]Continue Conversation[/]", id="message"),
+            Label("Additional Instructions (optional):"),
+            self.input_area,
+            self.create_button,
+            self.cancel_button,
+            id="continue_dialogue"
+        )
+
+    def on_mount(self):
+        self.set_focus(self.input_area)
+
+    def on_button_pressed(self, event):
+        instr = self.input_area.text
+        fut = getattr(self.app, "_instruction_future", None)
+        if fut and not fut.done():
+            if event.button.id == "continue":
+                fut.set_result(instr)
+            else:
+                fut.set_result(None)
+        self.app.pop_screen()
+# End Class ContinuationDialogue 
 
 
 
@@ -325,7 +434,7 @@ class Openai_API():
         self.api_key = self.config["OPENAI_API_KEY"]
         self.prompt_id = self.config["PROMPT_ID"]
         self.gpt_model = self.config["MODEL"]
-        self.temp = self.config["TEMP"]
+        #self.temp = self.config["TEMP"]
         self.vector_store_id = self.config["VECTOR_STORE_ID"]
         self.client = OpenAI(api_key=self.api_key)
         self.logger = logger or logging.getLogger("openai_assistant.api")
@@ -363,11 +472,12 @@ class Openai_API():
 
 
     def send_query(self, messages, lf=None,
-                   images_dir=None, display_images=True) -> tuple[str, list[str]]:
+                   images_dir=None, display_images=True
+    ) -> tuple[str, list[str]]:
         """
         Sends a query to the OpenAI Responses API.
         - messages: str or list of message dicts (see OpenAI docs)
-        - lf: open file handle for logging (optional)
+        - lf: open file handle for logging (optional but recommended)
         - images_dir: directory to save images (required for image output)
         - display_images: if True, try to display images with `feh`
         Returns: (text_response, list_of_image_paths)
@@ -473,7 +583,7 @@ class Openai_API():
 
             return text, image_paths
 
-        # Log errros and notify on screen
+        # Log errros and notify
         except openai.APIConnectionError as e:
             try:
                 self.logger.error(f"APIConnectionError: {e}")
@@ -618,7 +728,8 @@ class OpenaiAssistant(App):
     """
 
     def __init__(self, config, config_dir, chats_dir,
-                        images_dir, api_logger, *args, **kwargs):
+                 images_dir, api_logger, *args, **kwargs
+    ):
         super().__init__(*args, **kwargs)
         self.config = config
         self.config_dir = config_dir
@@ -673,10 +784,6 @@ class OpenaiAssistant(App):
     #Hide file tree on start 
     show_tree = var(False)
     path: reactive[str | None] = reactive(None)
- 
-    # Create input widget and chat display widget
-    input_area = Input_TextArea()
-    chat_view = VerticalScroll()
 
     # Style sheets for widgets 
     CSS = """
@@ -756,6 +863,10 @@ class OpenaiAssistant(App):
         align: center middle;
     }
 
+    ContinuationDialogue {
+        align: center middle;
+    }
+
     AboutDialogue {
         align: center middle;
     }
@@ -804,6 +915,17 @@ class OpenaiAssistant(App):
         background: $surface;
     }
 
+    #continue_dialogue {
+        grid-size: 1 7;
+        grid-gutter: 1;
+        grid-rows: 1fr 1fr 8fr 1fr 2fr 1fr 1fr;
+        padding: 0 1;
+        width: 60;
+        height: 28;
+        border: thick $background 80%;
+        background: $surface;
+    }
+
     #description_input {
         height: 10;
     }
@@ -831,7 +953,7 @@ class OpenaiAssistant(App):
     # Methods -------- #
     def on_mount(self) -> None:
         """
-        Sets default theme.
+        Sets default theme and installs the chat browser screen.
         """
         self.theme = "flexoki"
         self.install_screen(ChatBrowser(self.chats_dir), name='chat_browser')
@@ -841,6 +963,9 @@ class OpenaiAssistant(App):
         """
         Composes UI elements.
         """
+        self.input_area = Input_TextArea(id="input_area")
+        self.chat_view = VerticalScroll(id="chat_view")
+
         path = Path.home()
         resp_area = DisplayResponse(
             f"Hello {self.user_name}! Just type your input below.\n\n"
@@ -939,30 +1064,71 @@ class OpenaiAssistant(App):
 
     # Status widget helper method
     def show_status(self, message: str) -> None:
+        """
+        Updates status window.
+        """
         status = self.query_one("#status", StatusWidget)
         status.update(message)
 
 
     def do_file_upload(self, path: str) -> None:
+        """
+        Uploads file to Vector Store
+        """
         result = self.api.file_upload(path)
         status = result.status.strip()
         uploaded = UploadResult(path, status)
         self.push_screen(uploaded)
 
 
-    async def continue_chat(self, chpath) -> None:
-        # Create continuation prompt
+    async def continue_chat(self, chpath: str) -> None:
+        """
+        Run the ContinuationDialogue and get further instructions
+        if any. Call actual continuation
+        """
+
+        ## calback function
+        def _on_done(fut: asyncio.Future):
+            try:
+                further = fut.result()
+            except Exception:
+                pass
+
+            if further is not None:
+                asyncio.create_task(self._run_continue(chpath, further))
+        ##
+
+        loop = asyncio.get_running_loop()
+        self._instruction_future = loop.create_future()
+        self.push_screen(ContinuationDialogue())
+        self._instruction_future.add_done_callback(_on_done)
+    # End continue_chat()
+
+
+    async def _run_continue(self, chpath: str, further: str) -> None: 
+        """
+        Here we construct a continuation prompt, re-open the chat file
+        and send the continuation prompt to the API.
+        """
+
+        # Continuation instructions
         inst = """
         Here is a previous chat log. Please summarize the key points
         and continue the conversation from where it left off.
         """
+
         chname = os.path.basename(chpath)
         self.input_area.load_text("Thinking...")
         self.show_status(f"Loading chat: {chname}")
-
+         
+        # Read chat file
         with open(chpath, 'r', encoding="utf-8") as f:
             chat_history = f.read()
+
+        # Concat instructions, chat log and further instructions
         prompt = f"{inst}\n\nChat log:\n{chat_history}"
+        if further.strip():
+            prompt += f"\n\nFurther instructions:\n{further}"
 
         # Close existing log file
         self.lf.flush()
@@ -994,13 +1160,16 @@ class OpenaiAssistant(App):
                     timeout=5,
                 )
 
+            # Clear main chat window
+            await self.chat_view.remove_children()
             await self.chat_view.mount(
                 DisplayResponse(resp, border_title=self.assistant_name)
             )
 
+        # Clear input box
         self.input_area.clear()
         self.show_status(f"Run completed in {elapsed:.2f}s")
-    # End continue_chat
+    # End _run_continue()
 
 
     def action_toggle_file_view(self) -> None:
@@ -1023,7 +1192,7 @@ class OpenaiAssistant(App):
         Action to display the info dialogue.
         """
         msg = f"""
-      [#f5d676 b]OpenAI Assistant {__version__}[/]\n\n
+        [#f5d676 b]OpenAI Assistant {__version__}[/]\n\n
 Released under the Two-Clause BSD License\n
    (c) 2025 J. Adams jfa63atduckdotcom
         """
@@ -1178,7 +1347,7 @@ class ConfigManager:
             self.images_dir.mkdir(parents=True, exist_ok=True)
 
         return True
-    # End 
+    # End config_app()
 
 
     def cleanup_chat_files(self, min_size_bytes=50):
