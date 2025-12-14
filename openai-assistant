@@ -87,23 +87,31 @@ def _fence(indent: str, text: str) -> str:
     lines = ["```", text, "```"]
     return "\n".join(indent + line for line in lines)
 
+def _inline_code(s: str) -> str:
+    if "`" not in s:
+        return f"`{s}`"
+    if "``" not in s:
+        return f"``{s}``"
+    return s
+
 def normalize_math_for_markdown(text: str) -> str:
-    # Pass A: display math blocks
     def repl_display(m: Match[str]) -> str:
         indent = m.group("indent")
         pretty = _latex_to_pretty(m.group("body"))
+        if not pretty.strip():
+            return m.group(0)  # fail-open
         return _fence(indent, pretty)
 
     text = _DISPLAY_MATH_BLOCK.sub(repl_display, text)
 
-    # Pass B: inline math via \( ... \)
     def repl_inline(m: Match[str]) -> str:
         pretty = _latex_to_pretty(m.group("body"))
-        pretty = " ".join(pretty.splitlines()).strip()  # keep inline
-        return f"`{pretty}`"
+        pretty = " ".join(pretty.splitlines()).strip()
+        if not pretty:
+            return m.group(0)  # fail-open
+        return _inline_code(pretty)
 
-    text = _INLINE_MATH_PARENS.sub(repl_inline, text)
-    return text
+    return _INLINE_MATH_PARENS.sub(repl_inline, text)
 ##
 
 
@@ -161,7 +169,7 @@ class QuitDialogue(ModalScreen):
 
     def compose(self) -> ComposeResult:
         yield Grid(
-            Label(f"[#f5d676 b]Are you sure you want to quit?[/]", id="message"),
+            Label("[#f5d676 b]Are you sure you want to quit?[/]", id="message"),
             Button("Quit", variant="warning", compact=True, id="quit"),
             Button("Cancel", variant="primary", compact=True, id="cancel"),
             id="quit_dialogue",
@@ -400,7 +408,7 @@ class ContinuationDialogue(ModalScreen):
 
     def compose(self):
         yield Grid(
-            Label(f"[#f5d676 b]Continue Conversation[/]", id="message"),
+            Label("[#f5d676 b]Continue Conversation[/]", id="message"),
             Label("Additional Instructions (optional):"),
             self.input_area,
             self.create_button,
@@ -570,6 +578,9 @@ class Openai_API():
                     try:
                         # Use 'feh' if present
                         proc.Popen(['feh', img])
+                    except OSError:
+                        # Try to fall back on ImageMagick
+                        proc.Popen(['display', img])
                     except Exception as e:
                         self.logger.error(f"[system] Unable to display image: {e}")
 
@@ -1269,7 +1280,7 @@ class ConfigManager:
         )
 
         DEFAULTS = {
-            "MODEL": "gpt-5.1",
+            "MODEL": "gpt-5.2",
             "YOUR_NAME": "User",
             "ASSISTANT_NAME": "Assistant",
         }

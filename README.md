@@ -102,6 +102,7 @@ J Adams jfa63[at]duck[dot]com Dec 2025
 5. Image Generation  
    • Generate images by making the request and entering descriptions in the input widget. Multiple images may be requested in one entry  
    • Images are downloaded to `~/.openai-assistant/images/` and opened automatically with `feh`, if installed  
+   or try to fall back on ImageMagick's `display`.
   
 <img src="https://github.com/3ls-it/images/blob/main/assistant_v3_05.png" alt="Screenshot 5" resize="400">  
    
