@@ -29,14 +29,14 @@ J Adams jfa63[at]duck[dot]com Dec 2025
   • In-situ prompts to save new IDs back to your settings file  
   • One-time setup — but you can always edit the settings if you choose to
 
-- **Chat History with Memory**  
+- **Chat History with Memory & Chat Continuation**  
   • Logs every conversation to `~/.openai-assistant/chats/` to a time-stamped log file  
   • Uses Conversations API for per-chat context/memory  
   • Chat continuation feature allows for additional instructions  
    
 - **Requests API Integration**  
   • Uses the OpenAI Requests API  
-  • Uses all tools available for Requests: `code_interpreter`, `file_search`, `web_search`, `image_generation`...  
+  • Can use all tools available for Requests: `code_interpreter`, `file_search`, `web_search`, `image_generation`...  
   • API logging to `~/.openai-assistant/api.log` with daily log rotation  
   
 - **Textual, Interactive TUI**  
@@ -61,7 +61,7 @@ J Adams jfa63[at]duck[dot]com Dec 2025
    ```bash
    pip install -r requirements.txt
    ```
-   • You will also need to have the `feh` image program installed if you want automatic image display. Follow your operating system's method for package installation.  
+   • You will also need to have the `feh` image program installed if you want automatic image display. Optionally, `ImageMagick` is use; have one or both of these installed. (Follow your operating system's method for package installation.)  
   
 2. Configure & Run  
    • In the release directory, simply invoke the program; on first run it will auto-generate `~/.openai-assistant/settings.py` and prompt for required values. 
@@ -73,7 +73,7 @@ J Adams jfa63[at]duck[dot]com Dec 2025
    ```bash
    python3 openai-assistant
    ```  
-   • Optionally (and recommended) copy `openai-assistant` to a location in your `PATH`, e.g., `~/bin/`, `~/.local/bin/`, etc.  
+   • Optionally (and recommended) copy `openai-assistant` to a location in your `PATH`, e.g., `~/bin/`, `~/.local/bin/`, etc., and set it to be excecutable, as above.  
    • Default for `MODEL` (gpt-5.2) is applied automatically.  
    • Enter your `OPENAI_API_KEY`, `PROMPT_ID`, and `VECTOR_STORE_ID` when prompted.  
    • Flags:  
