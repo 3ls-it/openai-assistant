@@ -42,7 +42,7 @@ J Adams jfa63[at]duck[dot]com Dec 2025
 - **Textual, Interactive TUI**  
   • Multi-line editing with support for Markdown (submit with **ctrl+backslash**)  
   • Pretty Markdown rendering via `textual` and `rich`  
-  • Pretty LaTeX math rendering via `pylatexenc` (display only; log files unaltered)
+  • Pretty LaTeX math rendering via `pylatexenc` (display only; log files unaltered)  
   • Textual provides built-in key-bindings and themes  
   
 - **Robust Error Handling & Debugging**  
