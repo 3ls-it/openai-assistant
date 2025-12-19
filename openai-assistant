@@ -4,7 +4,7 @@ openai-assistant v3
 Copyright 2025 J Adams jfa63[at]duck[dot]com
 Released under the 2-Clause BSD license.
 """
-__version__ = 'v3.0.4'
+__version__ = 'v3.0.3'
 __author__ = 'J. Adams jfa63[at]duck[dot]com'
 
 # Builtin imports
@@ -445,7 +445,6 @@ class Openai_API():
         self.vector_store_id = self.config["VECTOR_STORE_ID"]
         self.client = OpenAI(api_key=self.api_key)
         self.logger = logger or logging.getLogger("openai_assistant.api")
-        
         # server-side conversation object backing this chat session
         conv = self.client.conversations.create(
             metadata={
@@ -456,10 +455,6 @@ class Openai_API():
         self.logger.info(f"Created conversation {self.conversation_id}")
         # lock to prevent concurrent operation on conversation
         self._conversation_lock = threading.Lock()
-        self._conversation_lock.acquire()
-        is_locked = self._conversation_lock.locked()
-        self.logger.debug(f"Conversation lock = {is_locked}")
-
         self.vector_store = None
         ## Vector Store setup        
         if self.vector_store_id:
@@ -479,22 +474,11 @@ class Openai_API():
         if self.conversation_id is not None:
             return
 
-        if self._conversation_lock.locked():
-            try:
-                self._conversation_lock.release()
-            except RuntimeError as e:
-                self.logger.debug(f"in _ensure_conversation()\n{e}")
-
-
         conv = self.client.conversations.create(
             metadata={
                 "app": "openai-assistant",
             }
         )
-
-        self._conversation_lock.acquire()
-        is_locked = self._conversation_lock.locked()
-        self.logger.debug(f"Conversation lock = {is_locked}")
         self.conversation_id = conv.id
         self.logger.info(f"Created new conversation {self.conversation_id}")
 
@@ -532,6 +516,7 @@ class Openai_API():
             messages = [{"role": "user", "content": messages}]
 
         # Make sure we have a Conversation object
+        self.logger.debug("in send_query(), calling _ensure_conversation()")
         self._ensure_conversation()
 
         start = time.time()
@@ -543,6 +528,7 @@ class Openai_API():
         try:
             for attempt in range(1, max_retries + 1):
                 try:
+                    self.logger.debug("in send_query(),about to create responses object")
                     with self._conversation_lock:
                         resp = self.client.responses.create(
                             model=self.gpt_model,
@@ -553,6 +539,7 @@ class Openai_API():
                             conversation=self.conversation_id,
                             tools=[{"type": "image_generation", "partial_images": 0}],
                         )
+                    self.logger.debug("in send_query(),response sent and returned")
                     break  # success, exit retry loop
 
                 except openai.APIStatusError as e:
@@ -1229,6 +1216,7 @@ class OpenaiAssistant(App):
                 DisplayPrompt(text, border_title=self.user_name))
 
             start = time.time()
+            self.api.logger.debug(f"calling send_query() at {start}")
             resp, image_path = await asyncio.to_thread(
                     self.api.send_query, text, self.lf, self.images_dir)
             elapsed = time.time() - start
