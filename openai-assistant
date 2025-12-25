@@ -4,7 +4,7 @@ openai-assistant v3
 Copyright 2025 J Adams jfa63[at]duck[dot]com
 Released under the 2-Clause BSD license.
 """
-__version__ = 'v3.0.3'
+__version__ = 'v3.0.4'
 __author__ = 'J. Adams jfa63[at]duck[dot]com'
 
 # Builtin imports
@@ -409,7 +409,7 @@ class ContinuationDialogue(ModalScreen):
     def compose(self):
         yield Grid(
             Label("[#f5d676 b]Continue Conversation[/]", id="message"),
-            Label("Additional Instructions (optional):"),
+            Label("Additional Instructions (optional):", id="additional_instr"),
             self.input_area,
             self.create_button,
             self.cancel_button,
@@ -1118,9 +1118,9 @@ class OpenaiAssistant(App):
     }
 
     #continue_dialogue {
-        grid-size: 1 7;
+        grid-size: 2 4;
         grid-gutter: 1;
-        grid-rows: 1fr 1fr 8fr 1fr 2fr 1fr 1fr;
+        grid-rows: 1fr 1fr 8fr 1fr;
         padding: 0 1;
         width: 60;
         height: 28;
@@ -1128,8 +1128,14 @@ class OpenaiAssistant(App):
         background: $surface;
     }
 
-    #description_input {
-        height: 10;
+
+    #instruction_input {
+        column-span: 2;
+        height: 15;
+    }
+
+    #additional_instr {
+        column-span: 2;
     }
 
     #message {
