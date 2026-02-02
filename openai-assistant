@@ -4,7 +4,7 @@ openai-assistant v3
 Copyright 2025 J Adams jfa63[at]duck[dot]com
 Released under the 2-Clause BSD license.
 """
-__version__ = 'v3.0.4'
+__version__ = 'v3.0.5'
 __author__ = 'J. Adams jfa63[at]duck[dot]com'
 
 # Builtin imports
@@ -133,7 +133,7 @@ class DisplayPrompt(Markdown):
     """
     Encapsulates a Markdown widget for user input display
     """
-    def __init__(self, text, border_title="", *args, **kwargs):
+    def __init__(self, text, border_title="", *args, **kwargs) -> None:
         super().__init__(text, *args, **kwargs)
         self.border_title = border_title
 # End Class Prompt 
@@ -145,7 +145,7 @@ class DisplayResponse(Markdown):
     """
     Encapsulates a Markdown widget for LLM response display
     """
-    def __init__(self, text, border_title="", *args, **kwargs):
+    def __init__(self, text, border_title="", *args, **kwargs) -> None:
         text = normalize_math_for_markdown(text)
         super().__init__(text, *args, **kwargs)
         self.border_title = border_title
@@ -191,7 +191,7 @@ class UploadDialogue(ModalScreen):
     Based on example code from the Textual website.
     """
 
-    def __init__(self, fname):
+    def __init__(self, fname) -> None:
         super().__init__()
         self.fname = os.path.basename(fname)
 
@@ -218,7 +218,7 @@ class UploadResult(ModalScreen):
     Provides a ModalScreen with the upload progress/result.
     """
 
-    def __init__(self, path, status):
+    def __init__(self, path, status) -> None:
         super().__init__()
         self.path = os.path.basename(path)
         self.status = status
@@ -258,7 +258,7 @@ class AboutDialogue(ModalScreen):
     Used for "About" when F1 is pressed.
     """
 
-    def __init__(self, msg):
+    def __init__(self, msg) -> None:
         super().__init__()
         self.msg = msg
         self.dismiss_button = Button(
@@ -284,7 +284,7 @@ class AboutDialogue(ModalScreen):
 
 
 class ChatFileSelected(Message):
-    def __init__(self, sender, path, method):
+    def __init__(self, sender, path, method) -> None:
         super().__init__()
         self.path = path
         self.method = method  # "left-click", "right-click" ^ "enter"
@@ -323,7 +323,7 @@ class ShowChat(Markdown):
     """
     Encapsulates a Markdown widget for chat file display
     """
-    def __init__(self, text="", border_title="", *args, **kwargs):
+    def __init__(self, text="", border_title="", *args, **kwargs) -> None:
         super().__init__(text, *args, **kwargs)
 # End Class ShowChat
 
@@ -334,7 +334,7 @@ class ChatBrowser(Screen):
     Provides the screen for browsing/selecting previous
     chats.
     """
-    def __init__(self, chats_dir, *args, **kwargs):
+    def __init__(self, chats_dir, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.dir_path = chats_dir
 
@@ -364,6 +364,9 @@ class ChatBrowser(Screen):
         event.stop()
         meth = event.method
         path = str(event.path)
+        if os.path.isdir(path):
+            return
+
         chat_fname = os.path.basename(path)
         
         if meth == "left-click":
@@ -386,7 +389,7 @@ class ContinuationDialogue(ModalScreen):
     Allows user to add instructions to the contiuation prompt.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
         self.create_button = Button(
@@ -406,7 +409,7 @@ class ContinuationDialogue(ModalScreen):
                 id="instruction_input")
 
 
-    def compose(self):
+    def compose(self) -> ComposeResult:
         yield Grid(
             Label("[#f5d676 b]Continue Conversation[/]", id="message"),
             Label("Additional Instructions (optional):", id="additional_instr"),
@@ -416,10 +419,10 @@ class ContinuationDialogue(ModalScreen):
             id="continue_dialogue"
         )
 
-    def on_mount(self):
+    def on_mount(self) -> None:
         self.set_focus(self.input_area)
 
-    def on_button_pressed(self, event):
+    def on_button_pressed(self, event) -> None:
         instr = self.input_area.text
         fut = getattr(self.app, "_instruction_future", None)
         if fut and not fut.done():
@@ -436,8 +439,7 @@ class Openai_API():
     """
     Encapsulates an OpenAI client instance.
     """
-
-    def __init__(self, config, logger=None):
+    def __init__(self, config, logger=None) -> None:
         self.config = config
         self.api_key = self.config["OPENAI_API_KEY"]
         self.prompt_id = self.config["PROMPT_ID"]
@@ -445,59 +447,61 @@ class Openai_API():
         self.vector_store_id = self.config["VECTOR_STORE_ID"]
         self.client = OpenAI(api_key=self.api_key)
         self.logger = logger or logging.getLogger("openai_assistant.api")
-        # server-side conversation object backing this chat session
-        conv = self.client.conversations.create(
-            metadata={
-                "app": "openai-assistant",
-            }
-        )
-        self.conversation_id = conv.id
-        self.logger.info(f"Created conversation {self.conversation_id}")
-        # lock to prevent concurrent operation on conversation
+
+        # Locks
         self._conversation_lock = threading.Lock()
+        self._inflight_lock = threading.Lock()   # NEW: serialize requests per API instance
+
+        # server-side conversation object backing this chat session
+        conv = self.client.conversations.create(metadata={"app": "openai-assistant"})
+        self.conversation_id = conv.id
+        self.logger.info("Created conversation %s", self.conversation_id)
+
         self.vector_store = None
-        ## Vector Store setup        
         if self.vector_store_id:
             self.vector_store = self.client.vector_stores.retrieve(
-                 vector_store_id=self.vector_store_id
+                vector_store_id=self.vector_store_id
             )
-            try:
-                self.logger.info(f"vector_store retrieved id={self.vector_store.id}")
-            except Exception as e:
-                print(f"in Openai_API.__init__()\n{e}")
+            self.logger.info("vector_store retrieved id=%s", self.vector_store.id)
 
 
     def _ensure_conversation(self) -> None:
         """
         Create/ensure a Conversation object.
+        Invariant: after return, self.conversation_id is not None.
         """
-        if self.conversation_id is not None:
-            return
+        with self._conversation_lock:
+            if self.conversation_id is not None:
+                return
 
-        conv = self.client.conversations.create(
-            metadata={
-                "app": "openai-assistant",
-            }
-        )
-        self.conversation_id = conv.id
-        self.logger.info(f"Created new conversation {self.conversation_id}")
+            conv = self.client.conversations.create(
+                metadata={"app": "openai-assistant"}
+            )
+
+            conv_id = getattr(conv, "id", None)
+            if not conv_id:
+                # Extremely unexpected; fail fast so we don't run with a broken state
+                raise RuntimeError("conversations.create() returned no conversation id")
+
+            self.conversation_id = conv_id
+            self.logger.info("Created new conversation %s", self.conversation_id)
 
 
-    def get_conversation_id(self) -> str:
+    def end_conversation(self) -> None:
         """
-        Return current Conversation ID.
+        Cleanly ends conversation with no dangling state client-side.
         """
-        return self.conversation_id
+        with self._conversation_lock:
+            if self.conversation_id:
+                self.logger.info("Ending conversation %s", self.conversation_id)
+            self.conversation_id = None
 
 
     def new_conversation(self) -> str:
         """
-        Create new Conversation object on server, return
-        new Conversation ID.
+        Alias to preserve local API
         """
-        self.conversation_id = None
-        self._ensure_conversation()
-        return self.conversation_id
+        self.end_conversation()
 
 
     def send_query(self, messages, lf=None,
@@ -515,10 +519,6 @@ class Openai_API():
         if isinstance(messages, str):
             messages = [{"role": "user", "content": messages}]
 
-        # Make sure we have a Conversation object
-        self.logger.debug("in send_query(), calling _ensure_conversation()")
-        self._ensure_conversation()
-
         start = time.time()
 
         # small retry loop for conversation_locked
@@ -526,47 +526,66 @@ class Openai_API():
         backoff = 1.0  # seconds
 
         try:
-            for attempt in range(1, max_retries + 1):
-                try:
-                    self.logger.debug("in send_query(),about to create responses object")
+            resp = None
+            # NEW: serialize all requests per API instance (prevents self-inflicted conversation_locked)
+            with self._inflight_lock:
+                # Ensure we have a conversation (explicit model)
+                self.logger.debug("in send_query(), calling _ensure_conversation()")
+                self._ensure_conversation()
+
+                for attempt in range(1, max_retries + 1):
+                    # Snapshot conversation id (do not hold lock during network I/O)
                     with self._conversation_lock:
+                        conversation_id = self.conversation_id
+
+                    try:
+                        self.logger.debug(
+                            "in send_query(), about to create responses object (attempt %d/%d conv=%s)",
+                            attempt, max_retries, conversation_id
+                        )
+
                         resp = self.client.responses.create(
                             model=self.gpt_model,
                             input=messages,
-                            prompt={
-                                "id": self.prompt_id
-                            },
-                            conversation=self.conversation_id,
+                            prompt={"id": self.prompt_id},
+                            conversation=conversation_id,
                             tools=[{"type": "image_generation", "partial_images": 0}],
+                            store=True,  # keep server-side persistence on (override dashboard prompt)
+                            # Note: if store=False, the model does not maintain per-conversation context
                         )
-                    self.logger.debug("in send_query(),response sent and returned")
-                    break  # success, exit retry loop
 
-                except openai.APIStatusError as e:
-                    # Check specifically for conversation_locked
-                    msg = str(e)
-                    cond1 = "conversation_locked"
-                    cond2 = "Another process is currently operating on this conversation"
-                    if cond1 in msg or cond2 in msg:
-                        try:
+                        self.logger.debug("in send_query(), response sent and returned")
+                        break
+
+                    except openai.APIStatusError as e:
+                        msg = str(e)
+                        cond1 = "conversation_locked"
+                        cond2 = "Another process is currently operating on this conversation"
+                        if cond1 in msg or cond2 in msg:
                             self.logger.warning(
                                 "conversation_locked for conversation %s (attempt %d/%d); retrying in %.1fs",
-                                self.conversation_id,
-                                attempt,
-                                max_retries,
-                                backoff,
+                                conversation_id, attempt, max_retries, backoff
                             )
-                        except Exception as er:
-                            print(f"in send_query()\n{er}\n{e}")
+                            if attempt == max_retries:
+                                raise
+                            time.sleep(backoff)
+                            continue
+                        raise
+            # end inflight lock / retry loop
 
-                        if attempt == max_retries:
-                            # Give up after max_retries; re-raise to fall through to your generic handler
-                            raise
-                        time.sleep(backoff)
-                        continue
-                    # Not a conversation_locked error: re-raise and let outer except handle it
-                    raise
-            # end retry loop
+            if resp is None:
+                raise RuntimeError("responses.create() failed without returning a response")
+            
+            # Sanity debug logging
+            try:
+                self.logger.debug(
+                    "resp.store=%r resp.id=%s conv=%s",
+                    getattr(resp, "store", None),
+                    getattr(resp, "id", None),
+                    self.conversation_id
+                )
+            except Exception:
+                pass
 
             text = resp.output_text or ""
             image_paths = []
@@ -590,6 +609,8 @@ class Openai_API():
                         image_paths.append(image_path)
                     except Exception as e:
                         self.logger.error(f"Saving {image_fname} failed: {e}")
+                else:
+                    self.logger.debug("resp.output item type=%s", getattr(item, "type", None))
 
             # Log image names to the chat log, if any
             if lf and image_paths:
@@ -647,6 +668,9 @@ class Openai_API():
             except Exception as er:
                 print(f"in send_query()\n{er}\n{e}")
             return 'An unexpected error occurred while streaming. Check log.', []
+        #finally:
+        #    self.logger.debug("resp keys: %s", resp.model_dump().keys())
+        #    self.logger.debug("resp: %s", resp.model_dump())
     # End send_query()
 
 
@@ -761,7 +785,7 @@ class ConfigManager:
     """
     Encapsulates configuration management
     """
-    def __init__(self, config_dir, config_path, chats_dir, images_dir):
+    def __init__(self, config_dir, config_path, chats_dir, images_dir) -> None:
         self.config_dir = config_dir
         self.config_path = config_path
         self.chats_dir = chats_dir
@@ -930,7 +954,7 @@ class OpenaiAssistant(App):
 
     def __init__(self, config, config_dir, chats_dir,
                  images_dir, api_logger, *args, **kwargs
-    ):
+    ) -> None:
         super().__init__(*args, **kwargs)
         self.config = config
         self.config_dir = config_dir
@@ -943,7 +967,6 @@ class OpenaiAssistant(App):
         # Create API instance
         self.api_logger = api_logger
         self.api = Openai_API(self.config, logger=self.api_logger)
-
         try:
             self.api_logger.info("config: model="+str(self.config.get('MODEL'))+ \
                 " temp="+str(self.config.get('TEMP'))+ \
@@ -966,6 +989,7 @@ class OpenaiAssistant(App):
         # Write timestamp to log file for session date
         self.lf.write(f"\nSession time stamp: {self.tstamp}\n")
         self.lf.flush()
+        self.startup_screen = True
     # End constructor
 
 
@@ -1176,6 +1200,7 @@ class OpenaiAssistant(App):
         self.chat_view = VerticalScroll(id="chat_view")
 
         path = Path.home()
+        # Startup screen widget
         resp_area = DisplayResponse(
             f"Hello {self.user_name}! Just type your input below to start a chat.\n\n"
              "`Ctrl+Backslash` Submit input\n\n"
@@ -1203,6 +1228,9 @@ class OpenaiAssistant(App):
         then displays returned result.
         """
         if event.key == "ctrl+backslash":
+            if self.startup_screen:
+                await self.chat_view.remove_children()
+                self.startup_screen = False
             self.show_status("")
             text = self.input_area._on_submit()
             if not text:
@@ -1344,6 +1372,8 @@ class OpenaiAssistant(App):
         if further.strip():
             prompt += f"\n\nFurther instructions:\n{further}"
 
+        # Explicitly end conversation
+        self.api.end_conversation()
         # Close existing log file
         self.lf.flush()
         self.lf.close()
@@ -1377,6 +1407,7 @@ class OpenaiAssistant(App):
 
             # Clear main chat window
             await self.chat_view.remove_children()
+            self.startup_screen = False
             await self.chat_view.mount(
                 DisplayResponse(resp, border_title=self.assistant_name)
             )
@@ -1391,13 +1422,14 @@ class OpenaiAssistant(App):
         """
         Creates a new chat
         """
+        # Reset Conversation object
+        self.api.new_conversation()
+
         # Close existing log file
         if self.lf:
             self.lf.flush()
             self.lf.close()
 
-        # Reset Conversation object
-        self.api.new_conversation()
         # Open new chat log
         now = datetime.now()
         tstamp = now.strftime('%-d %B %Y %-I:%M%p')
@@ -1420,6 +1452,7 @@ class OpenaiAssistant(App):
             )
 
         await self.chat_view.remove_children()
+        self.startup_screen = False
         await self.chat_view.mount(
             DisplayResponse(f"New chat {tstamp}", border_title="New Chat")
         )
