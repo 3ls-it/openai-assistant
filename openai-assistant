@@ -351,7 +351,7 @@ class ChatBrowser(Screen):
         yield Header()
         with Container():
             yield Label("")
-            yield Label("[#f5d676 b]Chat Browser (ESC to quit)[/]")
+            yield Label("[#f5d676 b]ENTER to continue chat, ESC to quit browser[/]")
             yield self.file_label
             yield Label("")
             yield self.show_chat
@@ -443,8 +443,8 @@ class Openai_API():
     def __init__(self, config, logger=None) -> None:
         self.config = config
         self.api_key = self.config["OPENAI_API_KEY"]
-        self.prompt_id = self.config["PROMPT_ID"]
         self.gpt_model = self.config["MODEL"]
+        self.developer_msg = self.config["DEVELOPER_MSG"]
         self.vector_store_id = self.config["VECTOR_STORE_ID"]
         ## New 3.1.0
         delete_flag = self.config["DELETE_SERVER_SIDE"].strip().lower()
@@ -474,6 +474,19 @@ class Openai_API():
             )
             self.logger.info("vector_store retrieved id=%s", self.vector_store.id)
 
+
+    # New v3.1.0
+    def build_prompt(self, msg) -> list:
+        return [
+            {
+                "role": "system",
+                "content": self.developer_msg,
+            },
+            {
+                "role": "user",
+                "content": msg,
+            },
+        ]
 
 
     def _ensure_conversation(self) -> None:
@@ -594,8 +607,8 @@ class Openai_API():
         Returns: (text_response, list_of_image_paths)
         """
 
-        if isinstance(messages, str):
-            messages = [{"role": "user", "content": messages}]
+        #if isinstance(messages, str):
+        #    messages = [{"role": "user", "content": messages}]
 
         start = time.time()
 
@@ -621,15 +634,25 @@ class Openai_API():
                             "in send_query(), about to create responses object (attempt %d/%d conv=%s)",
                             attempt, max_retries, conversation_id
                         )
+                        #self.logger.debug(f"""in send_query() passing prompts to model:
+                        #                  developer = {self.developer_msg}
+                        #                  user = {messages}\n""")
+                        #sys.exit()
 
                         resp = self.client.responses.create(
                             model=self.gpt_model,
-                            input=messages,
-                            prompt={"id": self.prompt_id},
+                            ## server-side prompt objects to be depricated Nov 2026
+                            #prompt={"id": self.prompt_id},
+                            input=self.build_prompt(messages),
+                            tools=[{"type": "image_generation", "partial_images": 0},
+                                   {"type": "web_search"},
+                                   {"type": "file_search",
+                                    "vector_store_ids": [self.vector_store_id]
+                                   }
+                            ],
                             conversation=conversation_id,
-                            #tools=[{"type": "image_generation", "partial_images": 0}],
-                            store=True,  # keep server-side persistence on (override dashboard prompt)
                             # Note: if store=False, the model does not maintain per-conversation context
+                            store=True,
                         )
 
                         self.logger.debug("in send_query(), response sent and returned")
@@ -1054,7 +1077,7 @@ class OpenaiAssistant(App):
         try:
             self.api_logger.info("config: model="+str(self.config.get('MODEL'))+ \
                 " temp="+str(self.config.get('TEMP'))+ \
-                " prompt_id="+("yes" if self.config.get('PROMPT_ID') else "no")+ \
+                #" prompt_id="+("yes" if self.config.get('PROMPT_ID') else "no")+ \
                 " vector_store_id="+("yes" if self.config.get('VECTOR_STORE_ID') else "no")
             )
         except Exception as e:
@@ -1076,9 +1099,10 @@ class OpenaiAssistant(App):
         self.startup_screen = True
     # End constructor
 
+    #model = config.get('MODEL')
 
-    TITLE = "OpenAI Assistant"
-    SUB_TITLE = f"{__version__}  •  Submit: Ctrl+\\  •  Quit: Ctrl+Q"
+    #TITLE = "OpenAI Assistant"
+    #SUB_TITLE = f"{__version__}  •  Model {model}"
     AUTO_FOCUS = "Input_TextArea"
 
     # Key bindings for Footer and help panel 
@@ -1271,6 +1295,8 @@ class OpenaiAssistant(App):
         """
         Sets default theme and installs the chat browser screen.
         """
+        model = self.config.get('MODEL')
+        self.TITLE = f"OpenAI Assistant {__version__}  •  Model {model}"
         self.theme = "gruvbox"
         self.install_screen(ChatBrowser(self.chats_dir), name='chat_browser')
         await self.show_status(f"Chat timestamp {self.tstamp}")
@@ -1569,6 +1595,10 @@ class OpenaiAssistant(App):
         async def _check_quit(quit: bool | None) -> None:
             if quit:
                 try:
+                    self.notify(
+                        "Attempting to delete server-side artifacts.",
+                        title="Shutting Down"
+                    )
                     self.api.end_conversation()
                 except Exception as e:
                     self.notify(
@@ -1679,6 +1709,7 @@ def main():
         try:
             app.run()
         finally:
+            c.print("[green][/]")
             try:
                 if getattr(app, "lf", None):
                     app.lf.close()
