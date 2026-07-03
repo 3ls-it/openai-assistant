@@ -473,19 +473,16 @@ class Openai_API():
                 vector_store_id=self.vector_store_id
             )
             self.logger.info("vector_store retrieved id=%s", self.vector_store.id)
+    # End constructor
 
 
     # New v3.1.0
-    def build_prompt(self, msg) -> list:
+    def _build_prompt(self, msg) -> list:
         return [
-            {
-                "role": "system",
-                "content": self.developer_msg,
-            },
-            {
-                "role": "user",
-                "content": msg,
-            },
+            {"role": "system",
+             "content": self.developer_msg},
+            {"role": "user",
+             "content": msg},
         ]
 
 
@@ -512,6 +509,134 @@ class Openai_API():
 
 
     # New v3.1.0
+    def _safe_model_dump(self, obj):
+        """
+        Best-effort structured dump for debug logging.
+        Redacts or truncates very large fields so api.log stays readable.
+        """
+        try:
+            if hasattr(obj, "model_dump"):
+                data = obj.model_dump()
+            elif isinstance(obj, dict):
+                data = obj
+            else:
+                return repr(obj)
+        except Exception as e:
+            try:
+                self.logger.debug(f"in _safe_model_dump()\n{e}")
+            except Exception:
+                pass
+            return repr(obj)
+
+        def scrub(x):
+            if isinstance(x, dict):
+                out = {}
+                for k, v in x.items():
+                    if k in {"result", "b64_json"} and isinstance(v, str):
+                        if len(v) > 200:
+                            out[k] = f"<redacted_large_field len={len(v)}>"
+                        else:
+                            out[k] = v
+                    elif k in {"content", "text"} and isinstance(v, str):
+                        if len(v) > 1000:
+                            out[k] = v[:1000] + "...<truncated>"
+                        else:
+                            out[k] = v
+                    else:
+                        out[k] = scrub(v)
+                return out
+            elif isinstance(x, list):
+                return [scrub(i) for i in x]
+            else:
+                return x
+
+        return scrub(data)
+
+
+    # New v3.1.0
+    def _log_response_output(self, resp) -> None:
+        """
+        Debug-log response output items, especially tool calls.
+        """
+        try:
+            output = getattr(resp, "output", []) or []
+            output_text = getattr(resp, "output_text", "") or ""
+            resp_id = getattr(resp, "id", None)
+
+            tool_item_count = 0
+            for item in output:
+                item_type = getattr(item, "type", None) or ""
+                if item_type != "message":
+                    tool_item_count += 1
+
+            self.logger.debug(
+                "Response summary: resp.id=%r output_text_len=%d output_items=%d tool_items=%d",
+                resp_id,
+                len(output_text),
+                len(output),
+                tool_item_count,
+            )
+
+        except Exception as e:
+            try:
+                self.logger.debug(f"in _log_response_output() summary\n{e}")
+            except Exception:
+                pass
+
+        for i, item in enumerate(getattr(resp, "output", []) or []):
+            try:
+                item_type = getattr(item, "type", None)
+                item_id = getattr(item, "id", None)
+                item_status = getattr(item, "status", None)
+                item_role = getattr(item, "role", None)
+
+                self.logger.debug(
+                    "resp.output[%d]: type=%r id=%r status=%r role=%r",
+                    i, item_type, item_id, item_status, item_role
+                )
+
+                if item_type == "message":
+                    try:
+                        content = getattr(item, "content", []) or []
+                        self.logger.debug(
+                            "resp.output[%d] message content_items=%d",
+                            i, len(content)
+                        )
+                    except Exception as e:
+                        try:
+                            self.logger.debug(f"in _log_response_output() message branch\n{e}")
+                        except Exception:
+                            pass
+
+                elif item_type == "image_generation_call":
+                    try:
+                        result = getattr(item, "result", None)
+                        result_len = len(result) if isinstance(result, str) else None
+                        self.logger.debug(
+                            "Tool call: image_generation id=%r status=%r result_len=%r",
+                            item_id, item_status, result_len
+                        )
+                    except Exception as e:
+                        try:
+                            self.logger.debug(f"in _log_response_output() image_generation_call branch\n{e}")
+                        except Exception:
+                            pass
+
+                else:
+                    # Generic handler for code_interpreter, file_search, web_search, and any future tool item types
+                    self.logger.debug(
+                        "Non-message output item detail[%d]=%r",
+                        i, self._safe_model_dump(item)
+                    )
+
+            except Exception as e:
+                try:
+                    self.logger.debug(f"in _log_response_output() item loop\n{e}")
+                except Exception:
+                    pass
+
+
+    # New v3.1.0
     def _delete_resp_from_list(self, resp_list: list[str]) -> list[str]:
         """
         Experimental response deletion
@@ -529,7 +654,6 @@ class Openai_API():
             except NotFoundError:
                 self.logger.info(f"Response {rid} not found on server")
                 results.append(f"{rid} not found.")
-
         return results
 
 
@@ -551,7 +675,6 @@ class Openai_API():
             except NotFoundError:
                 self.logger.info(f"Conversation {cid} not found on server")
                 results.append(f"{cid} not found.")
-
         return results
 
 
@@ -607,9 +730,6 @@ class Openai_API():
         Returns: (text_response, list_of_image_paths)
         """
 
-        #if isinstance(messages, str):
-        #    messages = [{"role": "user", "content": messages}]
-
         start = time.time()
 
         # small retry loop for conversation_locked
@@ -634,24 +754,21 @@ class Openai_API():
                             "in send_query(), about to create responses object (attempt %d/%d conv=%s)",
                             attempt, max_retries, conversation_id
                         )
-                        #self.logger.debug(f"""in send_query() passing prompts to model:
-                        #                  developer = {self.developer_msg}
-                        #                  user = {messages}\n""")
-                        #sys.exit()
 
                         resp = self.client.responses.create(
                             model=self.gpt_model,
-                            ## server-side prompt objects to be depricated Nov 2026
-                            #prompt={"id": self.prompt_id},
-                            input=self.build_prompt(messages),
+                            input=self._build_prompt(messages),
                             tools=[{"type": "image_generation", "partial_images": 0},
                                    {"type": "web_search"},
                                    {"type": "file_search",
                                     "vector_store_ids": [self.vector_store_id]
-                                   }
+                                   },
+                                   {"type": "code_interpreter",
+                                    "container": {"type": "auto", "memory_limit": "4g"}
+                                   } 
                             ],
                             conversation=conversation_id,
-                            # Note: if store=False, the model does not maintain per-conversation context
+                            # Note: if store=False, the model does not maintain conversation context
                             store=True,
                         )
 
@@ -691,9 +808,21 @@ class Openai_API():
             except Exception:
                 pass
 
-            text = resp.output_text or ""
-            image_paths = []
+            # Debug-log response output items, especially tool usage
+            try:
+                self._log_response_output(resp)
+            except Exception as e:
+                try:
+                    self.logger.debug(f"in send_query() calling _log_response_output()\n{e}")
+                except Exception:
+                    pass
+            ##
 
+            # Get our text output from the model's response
+            text = resp.output_text or ""
+
+            ## Let's extract images if present
+            image_paths = []
             if images_dir:
                 os.makedirs(images_dir, exist_ok=True)
 
@@ -948,16 +1077,17 @@ class ConfigManager:
             "YOUR_NAME",
             "ASSISTANT_NAME",
             "OPENAI_API_KEY",
-            "PROMPT_ID",
             "VECTOR_STORE_ID",
-            "DELETE_SERVER_SIDE"
+            "DELETE_SERVER_SIDE",
+            "DEVELOPER_MSG"
         )
 
         DEFAULTS = {
-            "MODEL": "gpt-5.2",
+            "MODEL": "gpt-5.4",
             "YOUR_NAME": "User",
             "ASSISTANT_NAME": "Assistant",
-            "DELETE_SERVER_SIDE": "false" 
+            "DELETE_SERVER_SIDE": "false",
+            "DEVELOPER_MSG": "You are a helpful AI assistant."
         }
 
         # Nice labels for prompts
@@ -968,7 +1098,8 @@ class ConfigManager:
             "OPENAI_API_KEY": "OpenAI API key",
             "PROMPT_ID": "Prompt ID",
             "VECTOR_STORE_ID": "Vector Store ID",
-            "DELETE_SERVER_SIDE": "Delete conversation from server (true|false)"
+            "DELETE_SERVER_SIDE": "Delete conversation from server (true|false)",
+            "DEVELOPER_MSG": "Customize your system-level prompt"
         }
 
         first_run = not self.config_path.exists()
@@ -976,9 +1107,9 @@ class ConfigManager:
         incomplete = False
         missing_ids: list[str] = []
 
-        # MODEL / YOUR_NAME / ASSISTANT_NAME / DELETE_SERVER_SIDE:
+        # MODEL / YOUR_NAME / ASSISTANT_NAME / DELETE_SERVER_SIDE / DEVELOPER_MSG:
         #    prompt with default, allow Enter to accept default.
-        for key in ("MODEL", "YOUR_NAME", "ASSISTANT_NAME", "DELETE_SERVER_SIDE"):
+        for key in ("MODEL", "YOUR_NAME", "ASSISTANT_NAME", "DELETE_SERVER_SIDE", "DEVELOPER_MSG"):
             current = (settings.get(key) or "").strip()
             if not current:
                 default = DEFAULTS[key]
@@ -988,8 +1119,8 @@ class ConfigManager:
                 print(f"Using {key} = {settings[key]!r}")
                 updated = True
 
-        # IDs & API key: require a value, but allow blank with warning.
-        for key in ("OPENAI_API_KEY", "PROMPT_ID", "VECTOR_STORE_ID"):
+        # API key: require a value, but allow blank with warning.
+        for key in ("OPENAI_API_KEY", "VECTOR_STORE_ID"):
             current = (settings.get(key) or "").strip()
             if not current:
                 label = LABELS.get(key, key)
@@ -1076,9 +1207,8 @@ class OpenaiAssistant(App):
         self.api = Openai_API(self.config, logger=self.api_logger)
         try:
             self.api_logger.info("config: model="+str(self.config.get('MODEL'))+ \
-                " temp="+str(self.config.get('TEMP'))+ \
-                #" prompt_id="+("yes" if self.config.get('PROMPT_ID') else "no")+ \
-                " vector_store_id="+("yes" if self.config.get('VECTOR_STORE_ID') else "no")
+                " vector_store_id="+("yes" if self.config.get('VECTOR_STORE_ID') else "no")+ \
+                " delete_flag="+str(self.config.get('DELETE_SERVER_SIDE'))
             )
         except Exception as e:
             print(f"{e}") # will print in Textual dev console
@@ -1099,10 +1229,7 @@ class OpenaiAssistant(App):
         self.startup_screen = True
     # End constructor
 
-    #model = config.get('MODEL')
 
-    #TITLE = "OpenAI Assistant"
-    #SUB_TITLE = f"{__version__}  •  Model {model}"
     AUTO_FOCUS = "Input_TextArea"
 
     # Key bindings for Footer and help panel 
@@ -1141,7 +1268,7 @@ class OpenaiAssistant(App):
 
     Input_TextArea {
         border: round blue;
-        height: 20%;
+        height: 30%;
     }
 
     ShowChat {
@@ -1636,11 +1763,6 @@ def main():
         description="Terminal client for the OpenAI Requests API",
     )
     parser.add_argument(
-        "--reset-prompt",
-        action="store_true",
-        help="Ignore and clear PROMPT_ID in settings before startup",
-    )
-    parser.add_argument(
         "--debug-api",
         action="store_true",
         help="Enable DEBUG level API logging to ~/.openai-assistant/api.log",
@@ -1668,15 +1790,6 @@ def main():
         is_config = config_man.config_app(settings)
         if not is_config:
             sys.exit()
-
-        # Apply resets if requested
-        if args.reset_prompt:
-            settings["PROMPT_ID"] = ""
-            try:
-                config_man.write_setting("PROMPT_ID", "")
-                print("Reset PROMPT_ID in settings.")
-            except Exception as e:
-                c.print_exception(f"[red]Caught:[/] {e}")
 
         # Configure API logger
         api_logfile = CONFIG_DIR / "api.log"
