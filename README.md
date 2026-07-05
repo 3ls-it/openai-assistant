@@ -2,27 +2,29 @@
   
 ### About  
   
-  This is a terminal-based OpenAI Assistant client, which as of v2.0.0-beta uses the Textual UI. As of v3.0.0, the Requests API is used, and GPT-5.2 is the default model. (Model choice is configurable in the `settings.py` file.) The current version supports file uploading and image generation, and features "pretty printing" of LaTeX math expressions.  
+  This is a terminal-based **non-agentic** OpenAI Assistant client, which as of v2.0.0-beta uses the Textual UI. As of v3.0.0, the Requests API is used with GPT-5.4 as the default model. (Model choice is configurable in the `settings.py` file.)  
+   
+  The current version supports file uploading, image generation, container artifact download/save, and web search. It also features "pretty printing" of LaTeX math expressions for a clean dispaly of mathematical symbols and expressions.  
+    
   I put this together for personal use as I do most of my work in the shell. It is meant to be a general-purpose AI assistant for those of us who work in the terminal.  
   
-  It was developed and is used on Unix-like systems with no consideration for that Other OS, though it should work on any Unix-like platform.  
+  It was developed and is used on Unix-like systems with no consideration for that Other OS, though it should work on any Unix-like platform just fine.  
   
   To use this client, you will need OpenAI API credentials:  
 https://platform.openai.com/docs/overview   
-You will also need to configure a Prompt via your OpenAI Dashboard as well as a Vector Store. If you already have a Prompt configured, you can enter the ID on first run and use it. Caveat being that it must be configured to use the Responses API with `effort: none`. You may also use an existing Vector Store, just provide it's ID on first run.  
   
   The Responses API is used for this client along with the Conversations API, which provides session-level memory and context.
-Each chat is logged locally, and can be used for chat continuation feature. The chat logs, api logs, generated images, and settings are self-contained in `~/.openai-assistant/`.  
+Each chat is logged locally, and is used for the chat continuation feature. The chat logs, api logs, generated images/artifacts, and settings are self-contained in `~/.openai-assistant/`.  
   
   
-J Adams jfa63[at]duck[dot]com Dec 2025   
+J Adams jfa63[at]duck[dot]com July 2026   
   
   
 ### Features  
   
 - **Seamless Configuration**  
   • Auto-generates `~/.openai-assistant/settings.py` on first run with all required and optional keys  
-  • Built-in defaults for `MODEL` (gpt-5.2)  
+  • Built-in default for `MODEL` (gpt-5.4)  
   • Interactive prompting for missing values
 
 - **Persistent Settings & IDs**  
@@ -73,12 +75,11 @@ J Adams jfa63[at]duck[dot]com Dec 2025
    ```bash
    python3 openai-assistant
    ```  
-   • Optionally (and recommended) copy `openai-assistant` to a location in your `PATH`, e.g., `~/bin/`, `~/.local/bin/`, etc., and set it to be excecutable, as above.  
-   • Default for `MODEL` (gpt-5.2) is applied automatically.  
-   • Enter your `OPENAI_API_KEY`, `PROMPT_ID`, and `VECTOR_STORE_ID` when prompted.  
+   • Optionally (and recommended) copy/install `openai-assistant` to a location in your `PATH`, e.g., `~/bin/`, `~/.local/bin/`, etc., and set it to be excecutable, as above.  
+   • Default for `MODEL` (gpt-5.4) is applied automatically.  
+   • Enter your `OPENAI_API_KEY`, and `VECTOR_STORE_ID` when prompted.  
    • Flags:  
    &nbsp;&nbsp;- `--debug-api` — Enable DEBUG-level API logging for more verbose diagnostics  
-   &nbsp;&nbsp;- `--reset-prompt` — Ignore and clear `PROMPT_ID` in settings before startup    
    
 3. Chat  
    • Multi-line input is supported (press **Enter** for a new line).  
@@ -104,7 +105,8 @@ J Adams jfa63[at]duck[dot]com Dec 2025
    • Creates new Conversations object   
    • Opens new local chat log file   
   
-6. Image Generation  
+6. Image Generation and Artifact Saving  
+   • Container artifacts, e.g., plots, text files, CVS files, PDF files, etc, are automatically saved in `~/.openai-assistant/artifacts/`  
    • Generate images by making the request and entering descriptions in the input widget. Multiple images may be requested in one entry  
    • Images are downloaded to `~/.openai-assistant/images/` and opened automatically with `feh`, if installed or try to fall back on ImageMagick's `display`.  
   
