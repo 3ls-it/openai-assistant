@@ -4,13 +4,14 @@ openai-assistant v3
 Copyright 2025 J Adams jfa63[at]duck[dot]com
 Released under the 2-Clause BSD license.
 """
-__version__ = 'v3.1.0-beta'
+__version__ = 'v3.1.0'
 __author__ = 'J. Adams jfa63[at]duck[dot]com'
 
 # Python imports
 import argparse
 import asyncio
 import base64
+from dataclasses import dataclass, field
 from datetime import datetime
 import logging
 from logging.handlers import TimedRotatingFileHandler
@@ -118,6 +119,18 @@ def normalize_math_for_markdown(text: str) -> str:
 
 
 ## Helper Classes -------- #
+# Provide data fields for model output
+@dataclass
+class QueryResult:
+    """
+    Structured result returned by Openai_API.send_query().
+    """
+    text: str
+    image_paths: list[str] = field(default_factory=list)
+    artifact_paths: list[str] = field(default_factory=list)
+
+
+
 # Text input widget
 class Input_TextArea(TextArea):
     """
@@ -151,6 +164,19 @@ class DisplayResponse(Markdown):
         super().__init__(text, *args, **kwargs)
         self.border_title = border_title
 # End Class Response
+
+
+
+# Widget for displaying local notifications
+class DisplayNotifications(Markdown):
+    """
+    Encapsulates a Markdown widget for local notification display
+    """
+    def __init__(self, text, border_title="", *args, **kwargs) -> None:
+        text = normalize_math_for_markdown(text)
+        super().__init__(text, *args, **kwargs)
+        self.border_title = border_title
+# End Class Notifications
 
 
 
@@ -446,7 +472,6 @@ class Openai_API():
         self.gpt_model = self.config["MODEL"]
         self.developer_msg = self.config["DEVELOPER_MSG"]
         self.vector_store_id = self.config["VECTOR_STORE_ID"]
-        ## New 3.1.0
         delete_flag = self.config["DELETE_SERVER_SIDE"].strip().lower()
         if delete_flag == 'true' or delete_flag == 'yes':
             self.delete_flag = True
@@ -456,7 +481,7 @@ class Openai_API():
         self.client = OpenAI(api_key=self.api_key)
         self.logger = logger or logging.getLogger("openai_assistant.api")
         self.response_id = None
-        self.session_resp_ids = [] ## New 3.1.0
+        self.session_resp_ids = []
 
         # Locks
         self._conversation_lock = threading.Lock()
@@ -476,7 +501,6 @@ class Openai_API():
     # End constructor
 
 
-    # New v3.1.0
     def _build_prompt(self, msg) -> list:
         return [
             {"role": "system",
@@ -508,7 +532,6 @@ class Openai_API():
             self.logger.info("Created new conversation %s", self.conversation_id)
 
 
-    # New v3.1.0
     def _safe_model_dump(self, obj):
         """
         Best-effort structured dump for debug logging.
@@ -553,7 +576,6 @@ class Openai_API():
         return scrub(data)
 
 
-    # New v3.1.0
     def _log_response_output(self, resp) -> None:
         """
         Debug-log response output items, especially tool calls.
@@ -636,7 +658,251 @@ class Openai_API():
                     pass
 
 
-    # New v3.1.0
+    def _write_bytes_to_file(self, data: bytes, out_dir: str, filename: str) -> str | None:
+        """
+        Write bytes to a file in out_dir and return the saved path.
+        Returns None on failure.
+        """
+        try:
+            if not out_dir:
+                raise ValueError("out_dir must be specified")
+
+            os.makedirs(out_dir, exist_ok=True)
+            out_path = os.path.join(out_dir, filename)
+
+            with open(out_path, "wb") as f:
+                f.write(data)
+
+            return out_path
+
+        except Exception as e:
+            try:
+                self.logger.error(f"in _write_bytes_to_file() saving {filename}: {e}")
+            except Exception:
+                pass
+            return None
+
+
+    def _extract_and_save_images(self, resp, images_dir: str | None) -> list[str]:
+        """
+        Extract image_generation_call items from resp.output, save them
+        to images_dir, and return list of saved image paths.
+        """
+        image_paths = []
+
+        if images_dir is None:
+            return image_paths
+
+        try:
+            os.makedirs(images_dir, exist_ok=True)
+        except Exception as e:
+            try:
+                self.logger.error(f"in _extract_and_save_images() mkdir failed: {e}")
+            except Exception:
+                pass
+            return image_paths
+
+        for item in getattr(resp, "output", []) or []:
+            try:
+                item_type = getattr(item, "type", None)
+                if item_type != "image_generation_call":
+                    continue
+
+                image_base64 = getattr(item, "result", None)
+                if not image_base64:
+                    try:
+                        self.logger.debug("image_generation_call had no result payload")
+                    except Exception:
+                        pass
+                    continue
+
+                now = datetime.now()
+                image_fname = f"image_{now:%Y%m%d_%H%M%S_%f}.png"
+
+                image_bytes = base64.b64decode(image_base64)
+                saved = self._write_bytes_to_file(image_bytes, images_dir, image_fname)
+                if saved:
+                    image_paths.append(saved)
+                    try:
+                        self.logger.info(f"Saved generated image {saved}")
+                    except Exception:
+                        pass
+
+            except Exception as e:
+                try:
+                    self.logger.error(f"in _extract_and_save_images(): {e}")
+                except Exception:
+                    pass
+
+        return image_paths
+    # End _extract_and_save_images()
+
+
+    def _extract_container_file_citations(self, resp) -> list[dict]:
+        """
+        Inspect assistant message annotations for container_file_citation
+        entries and return a list of dicts:
+            {
+                "container_id": ...,
+                "file_id": ...,
+                "filename": ...
+            }
+        """
+        citations = []
+
+        def _get(obj, key, default=None):
+            if isinstance(obj, dict):
+                return obj.get(key, default)
+            return getattr(obj, key, default)
+
+        for item in getattr(resp, "output", []) or []:
+            try:
+                if _get(item, "type") != "message":
+                    continue
+
+                for content_item in _get(item, "content", []) or []:
+                    annotations = _get(content_item, "annotations", []) or []
+
+                    for ann in annotations:
+                        ann_type = _get(ann, "type")
+                        if ann_type != "container_file_citation":
+                            continue
+
+                        citation = {
+                            "container_id": _get(ann, "container_id"),
+                            "file_id": _get(ann, "file_id"),
+                            "filename": _get(ann, "filename"),
+                        }
+                        citations.append(citation)
+
+                        try:
+                            self.logger.debug(
+                                "Found container_file_citation container_id=%r file_id=%r filename=%r",
+                                citation["container_id"],
+                                citation["file_id"],
+                                citation["filename"],
+                            )
+                        except Exception:
+                            pass
+
+            except Exception as e:
+                try:
+                    self.logger.debug(f"in _extract_container_file_citations()\n{e}")
+                except Exception:
+                    pass
+
+        return citations
+
+
+    def _download_container_file(
+        self,
+        container_id: str,
+        file_id: str,
+        filename: str,
+        artifacts_dir: str | None
+    ) -> str | None:
+        """
+        Download one generated code-interpreter/container file and save it
+        to artifacts_dir. Returns saved path or None on failure.
+        """
+        if not artifacts_dir:
+            return None
+
+        if not container_id or not file_id:
+            try:
+                self.logger.debug(
+                    "Skipping container file download: container_id=%r file_id=%r",
+                    container_id, file_id
+                )
+            except Exception:
+                pass
+            return None
+
+        try:
+            os.makedirs(artifacts_dir, exist_ok=True)
+        except Exception as e:
+            try:
+                self.logger.error(f"in _download_container_file() mkdir failed: {e}")
+            except Exception:
+                pass
+            return None
+
+        try:
+            file_bytes = self.client.containers.files.content.retrieve(
+                file_id=file_id,
+                container_id=container_id,
+            )
+
+            # Some SDKs may return a response-like object rather than bare bytes.
+            if hasattr(file_bytes, "read"):
+                data = file_bytes.read()
+            else:
+                data = file_bytes
+
+            if not isinstance(data, (bytes, bytearray)):
+                raise TypeError(f"Expected bytes-like object, got {type(data)}")
+
+            safe_name = filename or f"{file_id}.bin"
+            saved = self._write_bytes_to_file(bytes(data), artifacts_dir, safe_name)
+
+            if saved:
+                try:
+                    self.logger.info(
+                        "Downloaded container artifact container_id=%s file_id=%s path=%s",
+                        container_id, file_id, saved
+                    )
+                except Exception:
+                    pass
+
+            return saved
+
+        except Exception as e:
+            try:
+                self.logger.error(
+                    f"in _download_container_file() container_id={container_id} file_id={file_id}: {e}"
+                )
+            except Exception:
+                pass
+            return None
+    # End _download_container_file()
+
+
+    def _download_container_artifacts(self, resp, artifacts_dir: str | None) -> list[str]:
+        """
+        Find container_file_citation annotations in the response and
+        download all referenced files into artifacts_dir.
+        """
+        artifact_paths = []
+
+        citations = self._extract_container_file_citations(resp)
+        if not citations:
+            return artifact_paths
+
+        for citation in citations:
+            try:
+                container_id = citation.get("container_id")
+                file_id = citation.get("file_id")
+                filename = citation.get("filename")
+
+                saved = self._download_container_file(
+                    container_id=container_id,
+                    file_id=file_id,
+                    filename=filename,
+                    artifacts_dir=artifacts_dir,
+                )
+                if saved:
+                    artifact_paths.append(saved)
+
+            except Exception as e:
+                try:
+                    self.logger.error(f"in _download_container_artifacts(): {e}")
+                except Exception:
+                    pass
+
+        return artifact_paths
+    # End _download_container_artifacts()
+
+
     def _delete_resp_from_list(self, resp_list: list[str]) -> list[str]:
         """
         Experimental response deletion
@@ -657,7 +923,6 @@ class Openai_API():
         return results
 
 
-    # New v3.1.0
     def _delete_conv_from_list(self, conv_list: list[str]) -> list[str]:
         """
         Experimental conversation deletion
@@ -678,15 +943,14 @@ class Openai_API():
         return results
 
 
-    # New v3.1.0
     def _delete_conversation(self, conv) -> None:
         """
         Does server-side clean up of conversation artifacts.
         """
-        # Delete conversation just ended, pass as list 
-        self._delete_conv_from_list([conv])
         # Delete responses belonging to conversation
         self._delete_resp_from_list(self.session_resp_ids)
+        # Delete conversation just ended, pass as list 
+        self._delete_conv_from_list([conv])
         # Clear response ID list
         self.session_resp_ids.clear()
 
@@ -703,7 +967,7 @@ class Openai_API():
                     self.logger.info(f"Ending conversation {self.conversation_id}")
                 except Exception:
                     pass
-                if self.delete_flag: # New v3.1.0
+                if self.delete_flag:
                     try:
                         self._delete_conversation(self.conversation_id)
                     except Exception:
@@ -718,16 +982,16 @@ class Openai_API():
         self.end_conversation()
 
 
-    def send_query(self, messages, lf=None,
-                   images_dir=None, display_images=True
-    ) -> tuple[str, list[str]]:
+    def send_query(self, messages, lf=None, images_dir=None,
+                   artifacts_dir=None, display_images=True) -> QueryResult:
         """
         Sends a query to the OpenAI Responses API.
         - messages: str or list of message dicts (see OpenAI docs)
         - lf: open file handle for logging (optional but recommended)
         - images_dir: directory to save images (required for image output)
+        - artifacts_dir: directory to save container artifacts/files
         - display_images: if True, try to display images with `feh`
-        Returns: (text_response, list_of_image_paths)
+        Returns: QueryResult
         """
 
         start = time.time()
@@ -796,7 +1060,6 @@ class Openai_API():
                 # Fail right away
                 raise RuntimeError("responses.create() failed without returning a response")
 
-            ## New 3.1.0
             # Add response.id to session list
             self.response_id = resp.id
             self.session_resp_ids.append(self.response_id)
@@ -816,39 +1079,25 @@ class Openai_API():
                     self.logger.debug(f"in send_query() calling _log_response_output()\n{e}")
                 except Exception:
                     pass
-            ##
 
             # Get our text output from the model's response
             text = resp.output_text or ""
 
-            ## Let's extract images if present
-            image_paths = []
-            if images_dir:
-                os.makedirs(images_dir, exist_ok=True)
+            # Extract and save generated images
+            image_paths = self._extract_and_save_images(resp, images_dir)
 
-            # Walk the structured outputs for images.
-            for item in resp.output:
-                if item.type == "image_generation_call":
-                    image_base64 = item.result  # base64-encoded PNG/WebP/JPEG
-                    now = datetime.now()
-                    image_fname = f"image_{now:%Y%m%d_%H%M%S_%f}.png"
-                    if images_dir is None:
-                        raise ValueError("images_dir must be specified to save images.")
-                    image_path = os.path.join(images_dir, image_fname)
+            # Download generated container artifacts
+            artifact_paths = self._download_container_artifacts(resp, artifacts_dir)
 
-                    try:
-                        with open(image_path, "wb") as f:
-                            f.write(base64.b64decode(image_base64))
-                        image_paths.append(image_path)
-                    except Exception as e:
-                        self.logger.error(f"Saving {image_fname} failed: {e}")
-                else:
-                    self.logger.debug("resp.output item type=%s", getattr(item, "type", None))
-
-            # Log image names to the chat log, if any
             if lf and image_paths:
                 for img in image_paths:
                     lf.write(f"[image] {img}\n")
+
+            if lf and artifact_paths:
+                for art in artifact_paths:
+                    lf.write(f"[artifact] {art}\n")
+
+            if lf and (image_paths or artifact_paths):
                 lf.flush()
 
             # Display images, if any
@@ -863,6 +1112,19 @@ class Openai_API():
                     except Exception as e:
                         self.logger.error(f"[system] Unable to display image: {e}")
 
+            # Display container artifact images, if any
+            if display_images and artifact_paths:
+                for art in artifact_paths:
+                    if Path(art).suffix.lower() == ".png":
+                        try:
+                            # Use 'feh' if present
+                            proc.Popen(['feh', art])
+                        except OSError:
+                            # Try to fall back on ImageMagick
+                            proc.Popen(['display', art])
+                        except Exception as e:
+                            self.logger.error(f"[system] Unable to display image: {e}")
+
             try:
                 elapsed = time.time() - start
                 self.logger.info(
@@ -871,7 +1133,11 @@ class Openai_API():
             except Exception as e:
                 print(f"in send_query()\n{e}")
 
-            return text, image_paths
+            return QueryResult(
+                text=text,
+                image_paths=image_paths,
+                artifact_paths=artifact_paths,
+            )
 
         # Log errros and notify
         except openai.APIConnectionError as e:
@@ -879,28 +1145,36 @@ class Openai_API():
                 self.logger.error(f"APIConnectionError: {e}")
             except Exception as er:
                 print(f"in send_query()\n{er}\n{e}")
-            return "The server could not be reached. Check log.", []
+            return QueryResult(
+                    text="API Error: The server could not be reached. Check log."
+            )
 
         except openai.RateLimitError as e:
             try:
                 self.logger.error(f"RateLimitError: {e}")
             except Exception as er:
                 print(f"in send_query()\n{er}\n{e}")
-            return "A 429 status code was received; we should back off a bit.", []
+            return QueryResult(
+                    text="API Error: A 429 status code was received; we should back off a bit."
+            )
 
         except openai.APIStatusError as e:
             try:
                 self.logger.error(f"APIStatusError: {e}")
             except Exception as er:
                 print(f"in send_query()\n{er}\n{e}")
-            return f'A non-200-range status code was received\n {e}', []
+            return QueryResult(
+                    text=f"API Error: A non-200-range status code was received\n {e}"
+            )
 
         except Exception as e:
             try:
                 self.logger.exception(f"Unexpected error during run: {e}")
             except Exception as er:
                 print(f"in send_query()\n{er}\n{e}")
-            return 'An unexpected error occurred while streaming. Check log.', []
+            return QueryResult(
+                    text="API Error: An unexpected error occurred while streaming. Check log."
+            )
         #finally:
         #    self.logger.debug("resp keys: %s", resp.model_dump().keys())
         #    self.logger.debug("resp: %s", resp.model_dump())
@@ -1018,11 +1292,12 @@ class ConfigManager:
     """
     Encapsulates configuration management
     """
-    def __init__(self, config_dir, config_path, chats_dir, images_dir) -> None:
+    def __init__(self, config_dir, config_path, chats_dir, images_dir, artifacts_dir) -> None:
         self.config_dir = config_dir
         self.config_path = config_path
         self.chats_dir = chats_dir
         self.images_dir = images_dir
+        self.artifacts_dir = artifacts_dir
 
     # Helper to load configuration settings
     def load_settings(self) -> dict:
@@ -1163,6 +1438,8 @@ class ConfigManager:
             self.chats_dir.mkdir(parents=True, exist_ok=True)
         if not self.images_dir.exists():
             self.images_dir.mkdir(parents=True, exist_ok=True)
+        if not self.artifacts_dir.exists():
+            self.artifacts_dir.mkdir(parents=True, exist_ok=True)
 
         return True
     # End config_app()
@@ -1191,13 +1468,14 @@ class OpenaiAssistant(App):
     """
 
     def __init__(self, config, config_dir, chats_dir,
-                 images_dir, api_logger, *args, **kwargs
+                 images_dir, artifacts_dir, api_logger, *args, **kwargs
     ) -> None:
         super().__init__(*args, **kwargs)
         self.config = config
         self.config_dir = config_dir
         self.chats_dir = chats_dir
         self.images_dir = images_dir
+        self.artifacts_dir = artifacts_dir
 
         self.assistant_name = self.config["ASSISTANT_NAME"]
         self.user_name = self.config["YOUR_NAME"]
@@ -1249,8 +1527,8 @@ class OpenaiAssistant(App):
     # Style sheets for widgets 
     CSS = """
     DisplayPrompt {
-        border: round cyan;
-        background: $primary 10%;
+        border: round #a3ff87;
+        background: gray 10%;
         color: $text;
         margin: 1;        
         margin-right: 4;
@@ -1263,6 +1541,16 @@ class OpenaiAssistant(App):
         color: $text;             
         margin: 1;      
         margin-left: 4; 
+        padding: 1 2 0 2;
+    }
+
+    DisplayNotifications {
+        border: round cyan;
+        background: gray 10%;
+        color: $text;
+        margin: 1;        
+        margin-right: 12;
+        margin-left: 12;
         padding: 1 2 0 2;
     }
 
@@ -1418,6 +1706,29 @@ class OpenaiAssistant(App):
 
 
     # Methods -------- #
+    def _format_generated_files_notification(
+        self,
+        image_paths: list[str],
+        artifact_paths: list[str],
+    ) -> str:
+        """
+        Format a persistent in-chat notification listing generated files.
+        """
+        parts = []
+
+        if image_paths:
+            lines = ["Generated images:"]
+            lines.extend(f"- `{path}`" for path in image_paths)
+            parts.append("\n".join(lines))
+
+        if artifact_paths:
+            lines = ["Generated artifacts:"]
+            lines.extend(f"- `{path}`" for path in artifact_paths)
+            parts.append("\n".join(lines))
+
+        return "\n\n".join(parts)
+
+
     async def on_mount(self) -> None:
         """
         Sets default theme and installs the chat browser screen.
@@ -1488,15 +1799,20 @@ class OpenaiAssistant(App):
 
             start = time.time()
             self.api.logger.debug(f"calling send_query() at {start}")
-            resp, image_path = await asyncio.to_thread(
-                    self.api.send_query, text, self.lf, self.images_dir)
+            result = await asyncio.to_thread(
+                self.api.send_query,
+                text,
+                self.lf,
+                self.images_dir,
+                self.artifacts_dir,
+            )
             elapsed = time.time() - start
 
-            has_text = bool(resp and resp.strip())
+            has_text = bool(result.text and result.text.strip())
             if has_text:
                 try:
                     if self.lf:
-                        self.lf.write("\n[assistant] " + resp + "\n\n")
+                        self.lf.write("\n[assistant] " + result.text + "\n\n")
                         self.lf.flush()
                 except Exception as e:
                     self.notify(
@@ -1506,8 +1822,22 @@ class OpenaiAssistant(App):
                         timeout=5,
                     )
 
+                if "API Error" in result.text:
+                    await self.chat_view.mount(
+                        DisplayNotifications(result.text, border_title=self.assistant_name)
+                    )
+                else:
+                    await self.chat_view.mount(
+                        DisplayResponse(result.text, border_title=self.assistant_name)
+                    )
+
+            if result.image_paths or result.artifact_paths:
+                note = self._format_generated_files_notification(
+                    result.image_paths,
+                    result.artifact_paths,
+                )
                 await self.chat_view.mount(
-                    DisplayResponse(resp, border_title=self.assistant_name)
+                    DisplayNotifications(note, border_title="Notification")
                 )
 
             self.input_area.clear()
@@ -1636,15 +1966,20 @@ class OpenaiAssistant(App):
 
         # Send prompt and await response
         start = time.time()
-        resp, _ = await asyncio.to_thread(
-                self.api.send_query, prompt, self.lf, self.images_dir)
+        result = await asyncio.to_thread(
+            self.api.send_query,
+            prompt,
+            self.lf,
+            self.images_dir,
+            self.artifacts_dir,
+        )
         elapsed = time.time() - start
 
-        has_text = bool(resp and resp.strip())
+        has_text = bool(result.text and result.text.strip())
         if has_text:
             try:
                 if self.lf:
-                    self.lf.write("\n[assistant] " + resp + "\n\n")
+                    self.lf.write("\n[assistant] " + result.text + "\n\n")
                     self.lf.flush()
             except Exception as e:
                 self.notify(
@@ -1653,9 +1988,23 @@ class OpenaiAssistant(App):
                     severity="error",
                     timeout=5,
                 )
-            # Display response
+
+            if "API Error" in result.text:
+                await self.chat_view.mount(
+                    DisplayNotifications(result.text, border_title=self.assistant_name)
+                )
+            else:
+                await self.chat_view.mount(
+                    DisplayResponse(result.text, border_title=self.assistant_name)
+                )
+
+        if result.image_paths or result.artifact_paths:
+            note = self._format_generated_files_notification(
+                result.image_paths,
+                result.artifact_paths,
+            )
             await self.chat_view.mount(
-                DisplayResponse(resp, border_title=self.assistant_name)
+                DisplayNotifications(note, border_title="Notification")
             )
 
         # Clear input box
@@ -1718,7 +2067,7 @@ class OpenaiAssistant(App):
         Action to display the quit dialogue, then perform
         server-side cleanup and exit app.
         """
-        ## New 3.1.0
+
         async def _check_quit(quit: bool | None) -> None:
             if quit:
                 try:
@@ -1736,7 +2085,7 @@ class OpenaiAssistant(App):
                     )
                 finally:
                     self.exit()
-        # Push quit dialogue and check result, New 3.1.0
+        # Push quit dialogue and check result
         self.push_screen(QuitDialogue(), _check_quit)
 
 
@@ -1778,12 +2127,13 @@ def main():
         sleep(1)
 
         ## Some global definitions
-        CONFIG_DIR  = Path.home() / ".openai-assistant"
-        CONFIG_PATH = CONFIG_DIR / "settings.py"
-        CHATS_DIR   = CONFIG_DIR / "chats/"
-        IMAGES_DIR  = CONFIG_DIR / "images/"
+        CONFIG_DIR    = Path.home() / ".openai-assistant"
+        CONFIG_PATH   = CONFIG_DIR / "settings.py"
+        CHATS_DIR     = CONFIG_DIR / "chats/"
+        IMAGES_DIR    = CONFIG_DIR / "images/"
+        ARTIFACTS_DIR = CONFIG_DIR / "artifacts/"
 
-        config_man = ConfigManager(CONFIG_DIR, CONFIG_PATH, CHATS_DIR, IMAGES_DIR)
+        config_man = ConfigManager(CONFIG_DIR, CONFIG_PATH, CHATS_DIR, IMAGES_DIR, ARTIFACTS_DIR)
 
         # Get and load settings, prompt for missing settings
         settings = config_man.load_settings()
@@ -1815,9 +2165,24 @@ def main():
         sleep(1)
 
         # Launch the TUI
-        app = OpenaiAssistant(
-                settings, CONFIG_DIR, CHATS_DIR, IMAGES_DIR, api_logger
-        )
+        try:
+            app = OpenaiAssistant(
+                    settings, CONFIG_DIR, CHATS_DIR, IMAGES_DIR,
+                    ARTIFACTS_DIR, api_logger
+            )
+        except openai.AuthenticationError as ae:
+            msg = None
+            try:
+               msg = ae.body['message']
+            except Exception:
+                pass
+            if not msg:
+                msg = str(ae)
+            c.print(f"\n[red b]Caught AuthenticationError:[/]\n{msg}")
+            sys.exit()
+        except openai.APIConnectionError as ce:
+            c.print(f"\n[red b]Caught APIConnectionError:[/]\nCheck your network connection\n")
+            sys.exit()
         
         try:
             app.run()
