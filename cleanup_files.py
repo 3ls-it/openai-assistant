@@ -12,8 +12,8 @@ if ans != "YES":
 print("Cleaning up uploaded files...")
 
 homedir = os.path.expanduser("~") + "/"
-os.makedirs(homedir + ".openai", exist_ok=True)
-sys.path.insert(0, homedir + ".openai")
+os.makedirs(homedir + ".openai-assistant", exist_ok=True)
+sys.path.insert(0, homedir + ".openai-assistant")
 from settings import  OPENAI_API_KEY
 
 client = openai.OpenAI(api_key=OPENAI_API_KEY)

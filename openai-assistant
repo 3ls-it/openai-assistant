@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 openai-assistant v3
-Copyright 2025 J Adams jfa63[at]duck[dot]com
+Copyright 2025, 2026 J Adams jfa63[at]duck[dot]com
 Released under the 2-Clause BSD license.
 """
-__version__ = 'v3.1.0'
+__version__ = 'v3.2.0'
 __author__ = 'J. Adams jfa63[at]duck[dot]com'
 
 # Python imports
@@ -13,6 +13,7 @@ import asyncio
 import base64
 from dataclasses import dataclass, field
 from datetime import datetime
+import json
 import logging
 from logging.handlers import TimedRotatingFileHandler
 import os
@@ -128,6 +129,65 @@ class QueryResult:
     text: str
     image_paths: list[str] = field(default_factory=list)
     artifact_paths: list[str] = field(default_factory=list)
+
+
+class CleanupJournal:
+    """
+    Append-only JSONL journal for crash-safe server-side cleanup replay.
+    """
+
+    def __init__(self, path: Path, logger=None) -> None:
+        self.path = path
+        self.logger = logger
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def append(self, event: dict, *, fsync: bool = False) -> None:
+        """
+        Append one JSON object as a single JSONL record.
+        Never raise into caller.
+        """
+        try:
+            record = dict(event)
+            record.setdefault("ts", time.time())
+
+            with open(self.path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                f.flush()
+                if fsync:
+                    os.fsync(f.fileno())
+
+        except Exception as e:
+            if self.logger:
+                try:
+                    self.logger.error(f"CleanupJournal append failed: {e}")
+                except Exception:
+                    pass
+
+    def iter_events(self):
+        """
+        Yield parsed JSONL records. Ignore malformed/partial lines.
+        """
+        if not self.path.exists():
+            return
+
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        yield json.loads(line)
+                    except Exception:
+                        continue
+        except Exception as e:
+            if self.logger:
+                try:
+                    self.logger.error(f"CleanupJournal read failed: {e}")
+                except Exception:
+                    pass
+            return
+# End CleanupJournal
 
 
 
@@ -466,7 +526,7 @@ class Openai_API():
     """
     Encapsulates an OpenAI client instance.
     """
-    def __init__(self, config, logger=None) -> None:
+    def __init__(self, config, logger=None, journal_path=None) -> None:
         self.config = config
         self.api_key = self.config["OPENAI_API_KEY"]
         self.gpt_model = self.config["MODEL"]
@@ -477,9 +537,13 @@ class Openai_API():
             self.delete_flag = True
         else:
             self.delete_flag = False
-        ###
+
         self.client = OpenAI(api_key=self.api_key)
         self.logger = logger or logging.getLogger("openai_assistant.api")
+        self.journal = CleanupJournal(
+            Path(journal_path) if journal_path else Path.home() / ".openai-assistant" / "server_cleanup.jsonl",
+            logger=self.logger
+        )
         self.response_id = None
         self.session_resp_ids = []
 
@@ -491,6 +555,7 @@ class Openai_API():
         conv = self.client.conversations.create(metadata={"app": "openai-assistant"})
         self.conversation_id = conv.id
         self.logger.info("Created conversation %s", self.conversation_id)
+        self._journal_conversation_created(self.conversation_id)
 
         self.vector_store = None
         if self.vector_store_id:
@@ -508,6 +573,33 @@ class Openai_API():
             {"role": "user",
              "content": msg},
         ]
+
+
+    def _journal_conversation_created(self, conv_id: str) -> None:
+        """
+        Record creation of a server-side conversation in the cleanup journal.
+        """
+        if not conv_id:
+            return
+
+        self.journal.append({
+            "event": "conversation_created",
+            "conv_id": conv_id,
+        })
+
+
+    def _journal_response_created(self, conv_id: str, resp_id: str) -> None:
+        """
+        Record creation of a server-side response in the cleanup journal.
+        """
+        if not conv_id or not resp_id:
+            return
+
+        self.journal.append({
+            "event": "response_created",
+            "conv_id": conv_id,
+            "resp_id": resp_id,
+        })
 
 
     def _ensure_conversation(self) -> None:
@@ -530,6 +622,7 @@ class Openai_API():
 
             self.conversation_id = conv_id
             self.logger.info("Created new conversation %s", self.conversation_id)
+            self._journal_conversation_created(self.conversation_id)
 
 
     def _safe_model_dump(self, obj):
@@ -903,10 +996,54 @@ class Openai_API():
     # End _download_container_artifacts()
 
 
+    # Server-clean-up journal helpers
+    def _journal_cleanup_requested(self, conv_id: str) -> None:
+        """
+        Record that cleanup has been requested for a conversation.
+        """
+        if not conv_id:
+            return
+
+        self.journal.append({
+            "event": "cleanup_requested",
+            "conv_id": conv_id,
+        }, fsync=True)
+
+
+    def _journal_cleanup_succeeded(self, conv_id: str) -> None:
+        """
+        Record that cleanup completed successfully for a conversation.
+        """
+        if not conv_id:
+            return
+
+        self.journal.append({
+            "event": "cleanup_succeeded",
+            "conv_id": conv_id,
+        }, fsync=True)
+
+
+    def _journal_cleanup_failed(self, conv_id: str, err: str) -> None:
+        """
+        Record that cleanup failed for a conversation.
+        """
+        if not conv_id:
+            return
+
+        self.journal.append({
+            "event": "cleanup_failed",
+            "conv_id": conv_id,
+            "err": err,
+        }, fsync=True)
+
+
     def _delete_resp_from_list(self, resp_list: list[str]) -> list[str]:
         """
-        Experimental response deletion
-        Returns list of successfully deleted IDs (future use?)
+        Delete response objects from server.
+
+        Returns a list of response IDs successfully handled.
+        'Not found' is treated as success-equivalent/idempotent.
+        Raises on unexpected errors.
         """
         results = []
         if not resp_list:
@@ -914,19 +1051,32 @@ class Openai_API():
 
         for rid in resp_list:
             try:
-                r = self.client.responses.delete(rid)
+                self.client.responses.delete(rid)
                 self.logger.info(f"Response {rid} deleted from server")
-                results.append(r)
+                results.append(rid)
+
             except NotFoundError:
                 self.logger.info(f"Response {rid} not found on server")
-                results.append(f"{rid} not found.")
+                results.append(rid)
+
+            except Exception as e:
+                try:
+                    self.logger.error(f"Error deleting response {rid}: {e}")
+                except Exception:
+                    pass
+                raise
+
         return results
+    # End _delete_resp_from_list()
 
 
     def _delete_conv_from_list(self, conv_list: list[str]) -> list[str]:
         """
-        Experimental conversation deletion
-        Returns list of successfully deleted IDs (future use?)
+        Delete conversation objects from server.
+
+        Returns a list of conversation IDs successfully handled.
+        'Not found' is treated as success-equivalent/idempotent.
+        Raises on unexpected errors.
         """
         results = []
         if not conv_list:
@@ -934,48 +1084,258 @@ class Openai_API():
 
         for cid in conv_list:
             try:
-                c = self.client.conversations.delete(cid)
+                self.client.conversations.delete(cid)
                 self.logger.info(f"Conversation {cid} deleted from server")
-                results.append(c)
+                results.append(cid)
+
             except NotFoundError:
                 self.logger.info(f"Conversation {cid} not found on server")
-                results.append(f"{cid} not found.")
+                results.append(cid)
+
+            except Exception as e:
+                try:
+                    self.logger.error(f"Error deleting conversation {cid}: {e}")
+                except Exception:
+                    pass
+                raise
+
         return results
+    # End _delete_conv_from_list()
 
 
-    def _delete_conversation(self, conv) -> None:
+    def _get_pending_cleanup_summary(self) -> dict:
         """
-        Does server-side clean up of conversation artifacts.
+        Reconstruct cleanup state from the journal for debugging.
+
+        Returns a dict with:
+            requested: list of conversation IDs with cleanup_requested
+            succeeded: list of conversation IDs with cleanup_succeeded
+            pending: list of conversation IDs still pending cleanup
+            response_counts: mapping of conv_id -> number of recorded response IDs
+        """
+        resp_ids_by_conv = {}
+        requested = set()
+        succeeded = set()
+
+        for ev in self.journal.iter_events() or []:
+            try:
+                event = ev.get("event")
+                conv_id = ev.get("conv_id")
+                if not conv_id:
+                    continue
+
+                if event == "response_created":
+                    resp_id = ev.get("resp_id")
+                    if resp_id:
+                        resp_ids_by_conv.setdefault(conv_id, set()).add(resp_id)
+
+                elif event == "cleanup_requested":
+                    requested.add(conv_id)
+
+                elif event == "cleanup_succeeded":
+                    succeeded.add(conv_id)
+
+            except Exception as e:
+                try:
+                    self.logger.error(f"in _get_pending_cleanup_summary(): {e}")
+                except Exception:
+                    pass
+
+        return {
+            "requested": sorted(requested),
+            "succeeded": sorted(succeeded),
+            "pending": sorted(requested - succeeded),
+            "response_counts": {
+                conv_id: len(resp_ids)
+                for conv_id, resp_ids in resp_ids_by_conv.items()
+            },
+        }
+    # End _get_pending_cleanup_summary()
+
+
+    def replay_pending_cleanups(self) -> None:
+        """
+        Replay any pending server-side cleanup operations recorded in the
+        cleanup journal.
+
+        A conversation is considered pending if:
+        - cleanup_requested exists
+        - cleanup_succeeded does not exist
+        """
+        if not self.delete_flag:
+            try:
+                self.logger.info("Skipping cleanup replay: DELETE_SERVER_SIDE disabled")
+            except Exception:
+                pass
+            return
+
+        resp_ids_by_conv = {}
+        requested = set()
+        succeeded = set()
+
+        for ev in self.journal.iter_events() or []:
+            try:
+                event = ev.get("event")
+                conv_id = ev.get("conv_id")
+                if not conv_id:
+                    continue
+
+                if event == "response_created":
+                    resp_id = ev.get("resp_id")
+                    if resp_id:
+                        resp_ids_by_conv.setdefault(conv_id, set()).add(resp_id)
+
+                elif event == "cleanup_requested":
+                    requested.add(conv_id)
+
+                elif event == "cleanup_succeeded":
+                    succeeded.add(conv_id)
+
+            except Exception as e:
+                try:
+                    self.logger.error(f"in replay_pending_cleanups() parsing event: {e}")
+                except Exception:
+                    pass
+
+        pending = sorted(requested - succeeded)
+
+        if not pending:
+            try:
+                self.logger.info("No pending cleanup operations found in journal")
+            except Exception:
+                pass
+            return
+
+        try:
+            self.logger.info(
+                "Replaying pending cleanup for %d conversation(s)",
+                len(pending)
+            )
+        except Exception:
+            pass
+
+        for conv_id in pending:
+            resp_ids = sorted(resp_ids_by_conv.get(conv_id, set()))
+
+            try:
+                self.logger.info(
+                    "Replaying cleanup for conversation %s with %d response id(s)",
+                    conv_id, len(resp_ids)
+                )
+            except Exception:
+                pass
+
+            try:
+                with self._inflight_lock:
+                    self._delete_conversation(conv_id, resp_ids)
+
+                self._journal_cleanup_succeeded(conv_id)
+
+            except Exception as e:
+                err = repr(e)
+
+                try:
+                    self.logger.error(
+                        f"Replay cleanup failed for conversation {conv_id}: {e}"
+                    )
+                except Exception:
+                    pass
+
+                self._journal_cleanup_failed(conv_id, err)
+    # End replay_pending_cleanups()
+
+
+    def debug_log_cleanup_summary(self) -> None:
+        """
+        DEBUG-only helper to log reconstructed cleanup journal state.
+        Intended for development/testing around replay_pending_cleanups().
+        """
+        try:
+            if not self.logger.isEnabledFor(logging.DEBUG):
+                return
+        except Exception:
+            return
+
+        try:
+            summary = self._get_pending_cleanup_summary()
+            self.logger.debug("cleanup journal summary: %r", summary)
+        except Exception as e:
+            try:
+                self.logger.debug(f"in debug_log_cleanup_summary()\n{e}")
+            except Exception:
+                pass
+
+
+    def _delete_conversation(self, conv_id: str, resp_ids: list[str]) -> None:
+        """
+        Delete server-side artifacts for one conversation.
         """
         # Delete responses belonging to conversation
-        self._delete_resp_from_list(self.session_resp_ids)
+        self._delete_resp_from_list(resp_ids)
         # Delete conversation just ended, pass as list 
-        self._delete_conv_from_list([conv])
-        # Clear response ID list
-        self.session_resp_ids.clear()
+        self._delete_conv_from_list([conv_id])
 
 
     def end_conversation(self) -> None:
         """
-        Cleanly ends conversation with no dangling state client-side.
-        Deletes server-side conversation artifacts if DELETE_SERVER_SIDE = 'true'
-        in configuration.
+        Cleanly end the current conversation client-side.
+
+        If DELETE_SERVER_SIDE is enabled, perform server-side cleanup of:
+        - responses created during this conversation
+        - the conversation object itself
+
+        Crash-safe journaling:
+        - cleanup_requested is written before deletes
+        - cleanup_succeeded or cleanup_failed is written after
         """
+        # Snapshot and clear conversation state quickly under lock.
         with self._conversation_lock:
-            if self.conversation_id:
-                try:
-                    self.logger.info(f"Ending conversation {self.conversation_id}")
-                except Exception:
-                    pass
-                if self.delete_flag:
-                    try:
-                        self._delete_conversation(self.conversation_id)
-                    except Exception:
-                        pass
+            conv_id = self.conversation_id
             self.conversation_id = None
 
+        if not conv_id:
+            return
 
-    def new_conversation(self) -> str:
+        try:
+            self.logger.info(f"Ending conversation {conv_id}")
+        except Exception:
+            pass
+
+        if not self.delete_flag:
+            return
+
+        # Snapshot current response IDs outside the conversation lock.
+        resp_ids = list(dict.fromkeys(self.session_resp_ids))
+
+        # Persist intent before any server-side deletion begins.
+        self._journal_cleanup_requested(conv_id)
+
+        try:
+            # Serialize cleanup against any in-flight request activity.
+            with self._inflight_lock:
+                self._delete_conversation(conv_id, resp_ids)
+
+            # Only clear in-memory response IDs after successful cleanup.
+            self.session_resp_ids.clear()
+
+            self._journal_cleanup_succeeded(conv_id)
+
+        except Exception as e:
+            err = repr(e)
+
+            try:
+                self.logger.error(f"Cleanup failed for conversation {conv_id}: {e}")
+            except Exception:
+                pass
+
+            self._journal_cleanup_failed(conv_id, err)
+
+            # Re-raise so caller/UI can decide how noisy to be.
+            raise
+    # End end_conversation()
+
+
+    def new_conversation(self) -> None:
         """
         Alias to preserve local API
         """
@@ -1063,6 +1423,7 @@ class Openai_API():
             # Add response.id to session list
             self.response_id = resp.id
             self.session_resp_ids.append(self.response_id)
+            self._journal_response_created(conversation_id, self.response_id)
 
             # Sanity debug logging
             try:
@@ -1468,7 +1829,7 @@ class OpenaiAssistant(App):
     """
 
     def __init__(self, config, config_dir, chats_dir,
-                 images_dir, artifacts_dir, api_logger, *args, **kwargs
+                 images_dir, artifacts_dir, journal_path, api_logger, *args, **kwargs
     ) -> None:
         super().__init__(*args, **kwargs)
         self.config = config
@@ -1476,13 +1837,17 @@ class OpenaiAssistant(App):
         self.chats_dir = chats_dir
         self.images_dir = images_dir
         self.artifacts_dir = artifacts_dir
+        self.journal_path = journal_path
 
         self.assistant_name = self.config["ASSISTANT_NAME"]
         self.user_name = self.config["YOUR_NAME"]
 
         # Create API instance
         self.api_logger = api_logger
-        self.api = Openai_API(self.config, logger=self.api_logger)
+        self.api = Openai_API(self.config, logger=self.api_logger, journal_path=self.journal_path)
+        self.api.replay_pending_cleanups()
+        #  Call the cleanup summary diagnostic if needed.
+        #self.api.debug_log_cleanup_summary()
         try:
             self.api_logger.info("config: model="+str(self.config.get('MODEL'))+ \
                 " vector_store_id="+("yes" if self.config.get('VECTOR_STORE_ID') else "no")+ \
@@ -2132,6 +2497,7 @@ def main():
         CHATS_DIR     = CONFIG_DIR / "chats/"
         IMAGES_DIR    = CONFIG_DIR / "images/"
         ARTIFACTS_DIR = CONFIG_DIR / "artifacts/"
+        JOURNAL_PATH  = CONFIG_DIR / "server_cleanup.jsonl"
 
         config_man = ConfigManager(CONFIG_DIR, CONFIG_PATH, CHATS_DIR, IMAGES_DIR, ARTIFACTS_DIR)
 
@@ -2168,7 +2534,7 @@ def main():
         try:
             app = OpenaiAssistant(
                     settings, CONFIG_DIR, CHATS_DIR, IMAGES_DIR,
-                    ARTIFACTS_DIR, api_logger
+                    ARTIFACTS_DIR, JOURNAL_PATH, api_logger
             )
         except openai.AuthenticationError as ae:
             msg = None
