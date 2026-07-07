@@ -26,11 +26,16 @@ J Adams jfa63[at]duck[dot]com July 2026
   • Auto-generates `~/.openai-assistant/settings.py` on first run with all required and optional keys  
   • Built-in default for `MODEL` (gpt-5.4)  
   • Interactive prompting for missing values
-
+  
+- **Server-side Cleanup**  
+  • Optional server-side clean up (default `true`, set to `false` in `settings.py`)     
+  • Deletes server-side Conversation and Response objects on session end / app exit  
+  • Robust startup replay of pending cleanup operations for crash-proof clean up    
+  
 - **Persistent Settings & IDs**  
   • In-situ prompts to save new IDs back to your settings file  
   • One-time setup — but you can always edit the settings if you choose to
-
+  
 - **Chat History with Memory & Chat Continuation**  
   • Logs every conversation to `~/.openai-assistant/chats/` to a time-stamped log file  
   • Uses Conversations API for per-chat context/memory  
