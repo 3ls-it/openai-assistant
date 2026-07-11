@@ -4,7 +4,7 @@ openai-assistant v3
 Copyright 2025, 2026 J Adams jfa63[at]duck[dot]com
 Released under the 2-Clause BSD license.
 """
-__version__ = 'v3.2.0'
+__version__ = 'v3.2.1-beta'
 __author__ = 'J. Adams jfa63[at]duck[dot]com'
 
 # Python imports
@@ -370,6 +370,55 @@ class AboutDialogue(ModalScreen):
 
 
 
+class ChatFileActionDialogue(ModalScreen):
+    """
+    Provides a ModalScreen for choosing an action for a selected chat file.
+    """
+
+    def __init__(self, chat_name: str) -> None:
+        super().__init__()
+        self.chat_name = chat_name
+
+        self.view_button = Button(
+                "View Chat",
+                variant="primary",
+                compact=True,
+                disabled=False,
+                id="view")
+        self.continue_button = Button(
+                "Continue Chat",
+                variant="success",
+                compact=True,
+                disabled=False,
+                id="continue")
+        self.cancel_button = Button(
+                "Cancel",
+                variant="warning",
+                compact=True,
+                disabled=False,
+                id="cancel")
+
+    def compose(self) -> ComposeResult:
+        yield Grid(
+            Label("[#f5d676 b]Chat File Action[/]", id="message"),
+            Label(f"{self.chat_name}", id="chat_name"),
+            self.view_button,
+            self.continue_button,
+            self.cancel_button,
+            id="chat_file_action_dialogue"
+        )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "view":
+            self.dismiss("view")
+        elif event.button.id == "continue":
+            self.dismiss("continue")
+        else:
+            self.dismiss(None)
+# End Class ChatFileActionDialogue
+
+
+
 class ChatFileSelected(Message):
     def __init__(self, sender, path, method) -> None:
         super().__init__()
@@ -395,13 +444,6 @@ class ChatDirectoryTree(DirectoryTree):
                 self.post_message(ChatFileSelected(self, path, "left-click"))
             elif event.button == 3:  # Right click
                 self.post_message(ChatFileSelected(self, path, "right-click"))
-
-    async def on_key(self, event: events.Key) -> None:
-        if event.key == "enter":
-            node = self.cursor_node
-            if node is not None:
-                path = node.data.path
-                self.post_message(ChatFileSelected(self, path, "enter"))
 # End Class ChatDirectoryTree
 
 
@@ -417,13 +459,10 @@ class ShowChat(Markdown):
 
 
 class ChatBrowser(Screen):
-    """
-    Provides the screen for browsing/selecting previous
-    chats.
-    """
     def __init__(self, chats_dir, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.dir_path = chats_dir
+        self.selected_path = None
 
     BINDINGS = [("escape", "app.pop_screen", "Close screen")]
 
@@ -444,6 +483,24 @@ class ChatBrowser(Screen):
             yield ChatDirectoryTree(self.dir_path, id="chat-view")
 
 
+    def _load_chat_preview(self, path: str) -> None:
+        """
+        Load the selected chat file into the preview widget.
+        This operation is intentionally synchronous/blocking.
+        """
+        try:
+            self.show_chat.update("_Loading chat preview..._")
+            with open(path, "rt", encoding="utf-8") as f:
+                text = f.read()
+
+            # Convert LaTeX to Unicode
+            content = normalize_math_for_markdown(text)
+            self.show_chat.update(content)
+
+        except Exception as e:
+            self.show_chat.update(f"[red]Error loading chat:[/] {e}")
+
+
     async def on_chat_file_selected(self, event: ChatFileSelected) -> None:
         """
         Called when the user clicks on a chat file.
@@ -455,17 +512,33 @@ class ChatBrowser(Screen):
             return
 
         chat_fname = os.path.basename(path)
-        
+        self.selected_path = path
+        self.file_label.update(f"[green b]{chat_fname}[/]")
+
         if meth == "left-click":
-            with open(path, "rt") as f:
-               text = f.read() 
-            self.file_label.update(f"[blue b]{chat_fname}[/]")
-            # Convert LaTeX to Unicode
-            content = normalize_math_for_markdown(text)
-            self.show_chat.update(content) 
-        elif meth == "enter":
-            self.app.pop_screen()
-            await self.app.continue_chat(path)
+
+            def _check_action(action: str | None) -> None:
+                if action == "view":
+                    self._load_chat_preview(path)
+                elif action == "continue":
+                    self.app.pop_screen()
+                    asyncio.create_task(self.app.continue_chat(path))
+                # else: cancel => do nothing
+
+            action_dialogue = ChatFileActionDialogue(chat_fname)
+            self.app.push_screen(action_dialogue, _check_action)
+
+        #elif meth == "enter":
+        #    self.app.pop_screen()
+        #    await self.app.continue_chat(path)
+
+
+    async def on_key(self, event: events.Key) -> None:
+        if event.key == "enter":
+            if self.selected_path and not os.path.isdir(self.selected_path):
+                event.stop()
+                self.app.pop_screen()
+                await self.app.continue_chat(self.selected_path)
 # End Class ChatBrowser
 
 
@@ -551,6 +624,9 @@ class Openai_API():
         self._conversation_lock = threading.Lock()
         self._inflight_lock = threading.Lock() # serialize requests per API instance
 
+        # Do server-side cleanups before creating new conversation
+        self.replay_pending_cleanups()
+
         # server-side conversation object backing this chat session
         conv = self.client.conversations.create(metadata={"app": "openai-assistant"})
         self.conversation_id = conv.id
@@ -575,33 +651,6 @@ class Openai_API():
         ]
 
 
-    def _journal_conversation_created(self, conv_id: str) -> None:
-        """
-        Record creation of a server-side conversation in the cleanup journal.
-        """
-        if not conv_id:
-            return
-
-        self.journal.append({
-            "event": "conversation_created",
-            "conv_id": conv_id,
-        })
-
-
-    def _journal_response_created(self, conv_id: str, resp_id: str) -> None:
-        """
-        Record creation of a server-side response in the cleanup journal.
-        """
-        if not conv_id or not resp_id:
-            return
-
-        self.journal.append({
-            "event": "response_created",
-            "conv_id": conv_id,
-            "resp_id": resp_id,
-        })
-
-
     def _ensure_conversation(self) -> None:
         """
         Create/ensure a Conversation object.
@@ -623,6 +672,7 @@ class Openai_API():
             self.conversation_id = conv_id
             self.logger.info("Created new conversation %s", self.conversation_id)
             self._journal_conversation_created(self.conversation_id)
+    # End _ensure_conversation()
 
 
     def _safe_model_dump(self, obj):
@@ -667,6 +717,7 @@ class Openai_API():
                 return x
 
         return scrub(data)
+    # End _safe_model_dump()
 
 
     def _log_response_output(self, resp) -> None:
@@ -749,6 +800,7 @@ class Openai_API():
                     self.logger.debug(f"in _log_response_output() item loop\n{e}")
                 except Exception:
                     pass
+    # End _log_response_output()
 
 
     def _write_bytes_to_file(self, data: bytes, out_dir: str, filename: str) -> str | None:
@@ -774,6 +826,7 @@ class Openai_API():
             except Exception:
                 pass
             return None
+    # End _write_bytes_to_file()
 
 
     def _extract_and_save_images(self, resp, images_dir: str | None) -> list[str]:
@@ -996,18 +1049,37 @@ class Openai_API():
     # End _download_container_artifacts()
 
 
-    # Server-clean-up journal helpers
-    def _journal_cleanup_requested(self, conv_id: str) -> None:
+    def _journal_conversation_created(self, conv_id: str) -> None:
         """
-        Record that cleanup has been requested for a conversation.
+        Record creation of a server-side conversation in the cleanup journal.
         """
         if not conv_id:
             return
 
         self.journal.append({
+            "event": "conversation_created",
+            "conv_id": conv_id,
+        })
+
+        # Immediately tag for clean up
+        self.journal.append({
             "event": "cleanup_requested",
             "conv_id": conv_id,
         }, fsync=True)
+
+
+    def _journal_response_created(self, conv_id: str, resp_id: str) -> None:
+        """
+        Record creation of a server-side response in the cleanup journal.
+        """
+        if not conv_id or not resp_id:
+            return
+
+        self.journal.append({
+            "event": "response_created",
+            "conv_id": conv_id,
+            "resp_id": resp_id,
+        })
 
 
     def _journal_cleanup_succeeded(self, conv_id: str) -> None:
@@ -1307,8 +1379,6 @@ class Openai_API():
         # Snapshot current response IDs outside the conversation lock.
         resp_ids = list(dict.fromkeys(self.session_resp_ids))
 
-        # Persist intent before any server-side deletion begins.
-        self._journal_cleanup_requested(conv_id)
 
         try:
             # Serialize cleanup against any in-flight request activity.
@@ -1317,7 +1387,6 @@ class Openai_API():
 
             # Only clear in-memory response IDs after successful cleanup.
             self.session_resp_ids.clear()
-
             self._journal_cleanup_succeeded(conv_id)
 
         except Exception as e:
@@ -1340,6 +1409,7 @@ class Openai_API():
         Alias to preserve local API
         """
         self.end_conversation()
+        self._ensure_conversation()
 
 
     def send_query(self, messages, lf=None, images_dir=None,
@@ -1845,7 +1915,6 @@ class OpenaiAssistant(App):
         # Create API instance
         self.api_logger = api_logger
         self.api = Openai_API(self.config, logger=self.api_logger, journal_path=self.journal_path)
-        self.api.replay_pending_cleanups()
         #  Call the cleanup summary diagnostic if needed.
         #self.api.debug_log_cleanup_summary()
         try:
@@ -1965,6 +2034,38 @@ class OpenaiAssistant(App):
         align: center middle;
     }
 
+    ChatFileActionDialogue {
+        align: center middle;
+    }
+
+    #chat_file_action_dialogue {
+        layout: grid;
+        grid-size: 1 6;
+        grid-gutter: 1 1;
+        width: 60;
+        height: 15;
+        padding: 1 2;
+        border: thick $background 80%;
+        background: $surface;
+    }
+
+    #chat_file_action_dialogue #message {
+        column-span: 1;
+        text-style: bold;
+    }
+
+    #chat_file_action_dialogue #chat_name {
+        column-span: 1;
+        text-style: bold;
+        align: center middle;
+        color: $text;
+    }
+
+    #chat_file_action_dialogue Button {
+        width: 100%;
+        margin: 0 2;
+    }
+
     QuitDialogue {
         align: center middle;
     }
@@ -2040,7 +2141,6 @@ class OpenaiAssistant(App):
         background: $surface;
     }
 
-
     #instruction_input {
         column-span: 2;
         height: 15;
@@ -2051,6 +2151,13 @@ class OpenaiAssistant(App):
     }
 
     #message {
+        column-span: 2;
+        height: 1fr;
+        width: 1fr;
+        content-align: center middle;
+    }
+
+    #chat_name {
         column-span: 2;
         height: 1fr;
         width: 1fr;
