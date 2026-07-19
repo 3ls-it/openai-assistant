@@ -4,7 +4,7 @@ openai-assistant v3
 Copyright 2025, 2026 J Adams jfa63[at]duck[dot]com
 Released under the 2-Clause BSD license.
 """
-__version__ = 'v3.2.1-beta'
+__version__ = 'v3.2.1'
 __author__ = 'J. Adams jfa63[at]duck[dot]com'
 
 # Python imports
@@ -26,7 +26,7 @@ import textwrap
 import threading
 import time
 from time import sleep
-from typing import Any, Match
+from typing import Any, cast, Match
 
 # PyLaTeX
 from pylatexenc.latex2text import LatexNodes2Text
@@ -262,7 +262,7 @@ class QuitDialogue(ModalScreen):
             id="quit_dialogue",
         ) 
 
-    def on_button_pressed(self, event: Button.Pressed) -> str | None:
+    def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "quit":
             self.dismiss(True)
         else:
@@ -295,6 +295,7 @@ class UploadDialogue(ModalScreen):
             self.dismiss(False)
         elif event.button.id == "upload":
             self.dismiss(True)
+        return
 # End Class UploadDialogue
 
 
@@ -439,6 +440,8 @@ class ChatDirectoryTree(DirectoryTree):
         node_index = event.style.meta.get("node")
         if node_index is not None:
             node = self.get_node_at_line(node_index)
+            if node is None or node.data is None or node.data.path is None:
+                return
             path = node.data.path  # full path
             if event.button == 1:  # Left click
                 self.post_message(ChatFileSelected(self, path, "left-click"))
@@ -462,7 +465,7 @@ class ChatBrowser(Screen):
     def __init__(self, chats_dir, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.dir_path = chats_dir
-        self.selected_path = None
+        self.selected_path: str | None
 
     BINDINGS = [("escape", "app.pop_screen", "Close screen")]
 
@@ -522,15 +525,11 @@ class ChatBrowser(Screen):
                     self._load_chat_preview(path)
                 elif action == "continue":
                     self.app.pop_screen()
-                    asyncio.create_task(self.app.continue_chat(path))
-                # else: cancel => do nothing
+                    app = cast(OpenaiAssistant, self.app)
+                    asyncio.create_task(app.continue_chat(path))
 
             action_dialogue = ChatFileActionDialogue(chat_fname)
             self.app.push_screen(action_dialogue, _check_action)
-
-        #elif meth == "enter":
-        #    self.app.pop_screen()
-        #    await self.app.continue_chat(path)
 
 
     async def on_key(self, event: events.Key) -> None:
@@ -538,7 +537,8 @@ class ChatBrowser(Screen):
             if self.selected_path and not os.path.isdir(self.selected_path):
                 event.stop()
                 self.app.pop_screen()
-                await self.app.continue_chat(self.selected_path)
+                app = cast(OpenaiAssistant, self.app)
+                await app.continue_chat(self.selected_path)
 # End Class ChatBrowser
 
 
@@ -617,8 +617,8 @@ class Openai_API():
             Path(journal_path) if journal_path else Path.home() / ".openai-assistant" / "server_cleanup.jsonl",
             logger=self.logger
         )
-        self.response_id = None
-        self.session_resp_ids = []
+        self.response_id: str | None = None
+        self.session_resp_ids: list[str] = []
 
         # Locks
         self._conversation_lock = threading.Lock()
@@ -834,7 +834,7 @@ class Openai_API():
         Extract image_generation_call items from resp.output, save them
         to images_dir, and return list of saved image paths.
         """
-        image_paths = []
+        image_paths: list[str] = []
 
         if images_dir is None:
             return image_paths
@@ -884,7 +884,7 @@ class Openai_API():
     # End _extract_and_save_images()
 
 
-    def _extract_container_file_citations(self, resp) -> list[dict]:
+    def _extract_container_file_citations(self, resp) -> list[dict[str, str | None]]:
         """
         Inspect assistant message annotations for container_file_citation
         entries and return a list of dicts:
@@ -894,9 +894,9 @@ class Openai_API():
                 "filename": ...
             }
         """
-        citations = []
+        citations: list[dict[str, str | None]] = []
 
-        def _get(obj, key, default=None):
+        def _get(obj: Any, key: str, default: Any = None) -> Any:
             if isinstance(obj, dict):
                 return obj.get(key, default)
             return getattr(obj, key, default)
@@ -914,7 +914,7 @@ class Openai_API():
                         if ann_type != "container_file_citation":
                             continue
 
-                        citation = {
+                        citation: dict[str, str | None] = {
                             "container_id": _get(ann, "container_id"),
                             "file_id": _get(ann, "file_id"),
                             "filename": _get(ann, "filename"),
@@ -938,13 +938,14 @@ class Openai_API():
                     pass
 
         return citations
+    # End _extract_container_file_citations()
 
 
     def _download_container_file(
         self,
         container_id: str,
         file_id: str,
-        filename: str,
+        filename: str | None,
         artifacts_dir: str | None
     ) -> str | None:
         """
@@ -974,21 +975,22 @@ class Openai_API():
             return None
 
         try:
-            file_bytes = self.client.containers.files.content.retrieve(
+            # Some SDKs may return a response-like object rather than bare bytes.
+            file_obj: Any = self.client.containers.files.content.retrieve(
                 file_id=file_id,
                 container_id=container_id,
             )
 
-            # Some SDKs may return a response-like object rather than bare bytes.
-            if hasattr(file_bytes, "read"):
-                data = file_bytes.read()
+            if hasattr(file_obj, "read"):
+                data = file_obj.read()
             else:
-                data = file_bytes
+                data = bytes(file_obj)
 
             if not isinstance(data, (bytes, bytearray)):
                 raise TypeError(f"Expected bytes-like object, got {type(data)}")
 
             safe_name = filename or f"{file_id}.bin"
+
             saved = self._write_bytes_to_file(bytes(data), artifacts_dir, safe_name)
 
             if saved:
@@ -1018,7 +1020,7 @@ class Openai_API():
         Find container_file_citation annotations in the response and
         download all referenced files into artifacts_dir.
         """
-        artifact_paths = []
+        artifact_paths: list[str] = []
 
         citations = self._extract_container_file_citations(resp)
         if not citations:
@@ -1029,6 +1031,9 @@ class Openai_API():
                 container_id = citation.get("container_id")
                 file_id = citation.get("file_id")
                 filename = citation.get("filename")
+
+                if not container_id or not file_id:
+                    continue
 
                 saved = self._download_container_file(
                     container_id=container_id,
@@ -1117,7 +1122,8 @@ class Openai_API():
         'Not found' is treated as success-equivalent/idempotent.
         Raises on unexpected errors.
         """
-        results = []
+        results: list[str] = []
+
         if not resp_list:
             return results
 
@@ -1150,7 +1156,8 @@ class Openai_API():
         'Not found' is treated as success-equivalent/idempotent.
         Raises on unexpected errors.
         """
-        results = []
+        results: list[str] = []
+
         if not conv_list:
             return results
 
@@ -1185,7 +1192,8 @@ class Openai_API():
             pending: list of conversation IDs still pending cleanup
             response_counts: mapping of conv_id -> number of recorded response IDs
         """
-        resp_ids_by_conv = {}
+        resp_ids_by_conv: dict[str, set[str]] = {}
+
         requested = set()
         succeeded = set()
 
@@ -1241,7 +1249,7 @@ class Openai_API():
                 pass
             return
 
-        resp_ids_by_conv = {}
+        resp_ids_by_conv: dict[str, set[str]] = {}
         requested = set()
         succeeded = set()
 
@@ -1491,13 +1499,14 @@ class Openai_API():
                 raise RuntimeError("responses.create() failed without returning a response")
 
             # Add response.id to session list
-            self.response_id = resp.id
+            resp_id = resp.id
+            self.response_id = resp_id
             self.session_resp_ids.append(self.response_id)
             self._journal_response_created(conversation_id, self.response_id)
 
             # Sanity debug logging
             try:
-                self.logger.debug(f"resp.store={resp.store} \
+                self.logger.debug(f"resp.store={getattr(resp, "store", None)} \
                                   resp.id={self.response_id} conv={self.conversation_id}")
             except Exception:
                 pass
@@ -1546,7 +1555,7 @@ class Openai_API():
             # Display container artifact images, if any
             if display_images and artifact_paths:
                 for art in artifact_paths:
-                    if Path(art).suffix.lower() == ".png":
+                    if Path(art).suffix.lower() in (".png", ".jpg", ".gif"):
                         try:
                             # Use 'feh' if present
                             proc.Popen(['feh', art])
@@ -1613,107 +1622,85 @@ class Openai_API():
 
 
     # Upload file to OpenAI account
-    def file_upload(self, filename: str) -> VectorStoreFileBatch:
+    def file_upload(self, filename: str) -> VectorStoreFileBatch | None:
         """
-        Uploads a file.
+        Upload a file to the configured vector store.
+        Returns a VectorStoreFileBatch on success, or None on failure/cancel.
         """
         if not os.path.isfile(filename) or os.path.getsize(filename) == 0:
             try:
                 self.logger.info(f"upload skipped: empty or missing file {filename}")
             except Exception as e:
                 print(f"in file_upload()\n{e}")
-            return VectorStoreFileBatch(id="",
-                                        created_at=0,
-                                        file_counts={'cancelled': 1,
-                                                     'completed': 0,
-                                                     'failed': 0,
-                                                     'in_progress': 0,
-                                                     'total': 0},
-                                        object="vector_store.files_batch",
-                                        vector_store_id="",
-                                        status="cancelled")
+            return None
 
-        file_streams = []
+        if self.vector_store is None:
+            try:
+                self.logger.error("file_upload() called with no vector store configured")
+            except Exception as e:
+                print(f"in file_upload()\n{e}")
+            return None
+
+        file_streams: list[Any] = []
+
         try:
             file_streams.append(open(filename, "rb"))
             try:
-                self.logger.debug(f"uploading 1 file to vector_store_id={self.vector_store.id}")
+                self.logger.debug(
+                    f"uploading 1 file to vector_store_id={self.vector_store.id}"
+                )
             except Exception as e:
                 print(f"in file_upload()\n{e}")
+
             file_batch = self.client.vector_stores.file_batches.upload_and_poll(
-                vector_store_id=self.vector_store.id, files=file_streams
+                vector_store_id=self.vector_store.id,
+                files=file_streams,
             )
+
             try:
-                self.logger.info(f"upload status={file_batch.status} file_counts={file_batch.file_counts}")
+                self.logger.info(
+                    f"upload status={file_batch.status} file_counts={file_batch.file_counts}"
+                )
             except Exception as e:
                 print(f"in file_upload()\n{e}")
+
             return file_batch
+
         except openai.APIConnectionError as e:
             try:
                 self.logger.error(f"APIConnectionError during upload: {e}")
-            except Exception as e:
-                print(f"in file_upload()\n{e}")
-            return VectorStoreFileBatch(id="",
-                                        created_at=0,
-                                        file_counts={'cancelled': 0,
-                                                     'completed': 0,
-                                                     'failed': 1,
-                                                     'in_progress': 0,
-                                                     'total': 0},
-                                        object="vector_store.files_batch",
-                                        vector_store_id="",
-                                        status="failed")
+            except Exception as er:
+                print(f"in file_upload()\n{er}\n{e}")
+            return None
+
         except openai.RateLimitError as e:
             try:
                 self.logger.error(f"RateLimitError during upload: {e}")
             except Exception as er:
                 print(f"in file_upload()\n{er}\n{e}")
-            return VectorStoreFileBatch(id="",
-                                        created_at=0,
-                                        file_counts={'cancelled': 0,
-                                                     'completed': 0,
-                                                     'failed': 1,
-                                                     'in_progress': 0,
-                                                     'total': 0},
-                                        object="vector_store.files_batch",
-                                        vector_store_id="",
-                                        status="failed")
+            return None
+
         except openai.APIStatusError as e:
             try:
                 self.logger.error(f"APIStatusError during upload: {e}")
             except Exception as er:
                 print(f"in file_upload()\n{er}\n{e}")
-            return VectorStoreFileBatch(id="",
-                                        created_at=0,
-                                        file_counts={'cancelled': 0,
-                                                     'completed': 0,
-                                                     'failed': 1,
-                                                     'in_progress': 0,
-                                                     'total': 0},
-                                        object="vector_store.files_batch",
-                                        vector_store_id="",
-                                        status="failed")
+            return None
+
         except Exception as e:
             try:
                 self.logger.error(f"Unexpected error during upload: {e}")
             except Exception as er:
                 print(f"in file_upload()\n{er}\n{e}")
-            return VectorStoreFileBatch(id="",
-                                        created_at=0,
-                                        file_counts={'cancelled': 0,
-                                                     'completed': 0,
-                                                     'failed': 1,
-                                                     'in_progress': 0,
-                                                     'total': 0},
-                                        object="vector_store.files_batch",
-                                        vector_store_id="",
-                                        status="failed")
+            return None
+
         finally:
             for fs in file_streams:
                 try:
                     fs.close()
                 except Exception as e:
                     self.logger.debug(f"in file_upload()\n{e}")
+
     # End file_upload()
 # End Class Openai_API 
 
@@ -1876,7 +1863,7 @@ class ConfigManager:
     # End config_app()
 
 
-    def cleanup_chat_files(self, min_size_bytes=50):
+    def cleanup_chat_files(self, min_size_bytes=50) -> None:
         """
         Delete all files in the chats dir smaller than min_size_b bytes.
         This will clean out "empty" chat files left over from unused
@@ -2324,11 +2311,12 @@ class OpenaiAssistant(App):
         Called when the user clicks a file in the directory tree.
         """
         event.stop()
+        self.path: str | None
         self.path = str(event.path)
 
         # Called when UploadDialogue is dismissed.
         def _check_upload(upload: bool | None) -> None:
-            if upload:
+            if upload and self.path is not None:
                 self.do_file_upload(self.path)
         # End
 
@@ -2357,7 +2345,10 @@ class OpenaiAssistant(App):
         Uploads file to Vector Store
         """
         result = self.api.file_upload(path)
-        status = result.status.strip()
+        if result is None:
+            status = "failed"
+        else:
+            status = result.status.strip()
         uploaded = UploadResult(path, status)
         self.push_screen(uploaded)
 
@@ -2369,7 +2360,7 @@ class OpenaiAssistant(App):
         """
 
         ## calback function
-        def _on_done(fut: asyncio.Future):
+        def _on_done(fut: asyncio.Future) -> None:
             try:
                 further = fut.result()
             except Exception as e:
@@ -2568,7 +2559,7 @@ class OpenaiAssistant(App):
         msg = f"""
         [#f5d676 b]OpenAI Assistant {__version__}[/]\n\n
 Released under the Two-Clause BSD License\n
-   (c) 2025 J. Adams jfa63atduckdotcom
+   (c) 2025, 2026 J. Adams jfa63atduckdotcom
         """
         self.push_screen(AboutDialogue(msg))
 # End Class OpenaiAssistant
@@ -2654,7 +2645,7 @@ def main():
             c.print(f"\n[red b]Caught AuthenticationError:[/]\n{msg}")
             sys.exit()
         except openai.APIConnectionError as ce:
-            c.print(f"\n[red b]Caught APIConnectionError:[/]\nCheck your network connection\n")
+            c.print(f"\n[red b]Caught APIConnectionError:[/]\nCheck your network connection\n{ce}")
             sys.exit()
         
         try:
